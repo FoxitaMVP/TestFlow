@@ -18,9 +18,33 @@ const seedState = {
       ownerId: "u1",
       groupIds: ["g1"],
       steps: [
-        { id: "s1", title: "Открыть форму входа", status: "passed" },
-        { id: "s2", title: "Ввести email и пароль", status: "passed" },
-        { id: "s3", title: "Проверить переход в кабинет", status: "passed" },
+        {
+          id: "s1",
+          precondition: "Пользователь зарегистрирован",
+          action: "Открыть форму входа",
+          expected: "Форма входа отображается",
+          actual: "Форма открылась",
+          comment: "",
+          status: "passed",
+        },
+        {
+          id: "s2",
+          precondition: "Форма входа открыта",
+          action: "Ввести email и пароль",
+          expected: "Данные принимаются без ошибок",
+          actual: "Поля заполнены",
+          comment: "",
+          status: "passed",
+        },
+        {
+          id: "s3",
+          precondition: "Данные введены",
+          action: "Проверить переход в кабинет",
+          expected: "Открывается кабинет пользователя",
+          actual: "Кабинет открыт",
+          comment: "",
+          status: "passed",
+        },
       ],
     },
     {
@@ -30,9 +54,33 @@ const seedState = {
       ownerId: "u2",
       groupIds: ["g1", "g2"],
       steps: [
-        { id: "s4", title: "Открыть страницу восстановления", status: "passed" },
-        { id: "s5", title: "Отправить email", status: "failed" },
-        { id: "s6", title: "Проверить письмо", status: "untested" },
+        {
+          id: "s4",
+          precondition: "Пользователь не авторизован",
+          action: "Открыть страницу восстановления",
+          expected: "Страница восстановления доступна",
+          actual: "Страница открылась",
+          comment: "",
+          status: "passed",
+        },
+        {
+          id: "s5",
+          precondition: "Email зарегистрирован",
+          action: "Отправить email",
+          expected: "Письмо восстановления отправлено",
+          actual: "Появилась ошибка отправки",
+          comment: "Проверить почтовый сервис",
+          status: "failed",
+        },
+        {
+          id: "s6",
+          precondition: "Письмо отправлено",
+          action: "Проверить письмо",
+          expected: "Письмо содержит рабочую ссылку",
+          actual: "",
+          comment: "",
+          status: "untested",
+        },
       ],
     },
   ],
@@ -53,7 +101,11 @@ let editingSuiteId = null;
 
 function loadState() {
   const saved = localStorage.getItem(storeKey);
-  return saved ? JSON.parse(saved) : structuredClone(seedState);
+  const loadedState = saved ? JSON.parse(saved) : structuredClone(seedState);
+  loadedState.cases.forEach((testCase) => {
+    testCase.steps = testCase.steps.map(normalizeStep);
+  });
+  return loadedState;
 }
 
 function saveState() {
@@ -75,6 +127,18 @@ function escapeHtml(value = "") {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function normalizeStep(step) {
+  return {
+    id: step.id || id("s"),
+    precondition: step.precondition || "",
+    action: step.action || step.title || "",
+    expected: step.expected || "",
+    actual: step.actual || "",
+    comment: step.comment || "",
+    status: step.status || "untested",
+  };
 }
 
 function progressForCase(testCase) {
@@ -215,7 +279,7 @@ function renderCases() {
     ${topbar(
       "Тест-кейсы",
       "Кейсы",
-      "Список кейсов, их группы, ответственные и текущий прогресс по шагам.",
+      "Список кейсов, их группы, ответственные и текущий прогресс по строкам проверки.",
       `<button class="primary" data-view="create-case">Создать кейс</button>`,
     )}
     ${renderFilters()}
@@ -230,7 +294,7 @@ function renderCreateCase() {
     ${topbar(
       "Новый кейс",
       "Создание кейса",
-      "Заполните описание, выберите группы и добавьте шаги с начальными статусами.",
+      "Заполните описание, выберите группы и добавьте строки проверки с ожидаемым и фактическим результатом.",
       `<button class="secondary" data-view="cases">Назад к кейсам</button>`,
     )}
     <section class="panel form-page">
@@ -239,12 +303,8 @@ function renderCreateCase() {
         <label>Описание<textarea name="description" placeholder="Что проверяем"></textarea></label>
         <label>Ответственный<select name="ownerId">${state.users.map((user) => `<option value="${user.id}">${escapeHtml(user.name)}</option>`).join("")}</select></label>
         <label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions()}</select></label>
-        <div class="step-list" data-steps>
-          <div class="step-row">
-            <label>Шаг<input name="stepTitle" placeholder="Действие или проверка" /></label>
-            <label>Статус<select name="stepStatus">${statusOptions()}</select></label>
-            <button class="secondary" type="button" data-action="add-step">+</button>
-          </div>
+        <div class="step-list step-table" data-steps>
+          ${renderStepInputRow("add")}
         </div>
         <div class="toolbar">
           <button class="primary">Создать кейс</button>
@@ -276,18 +336,19 @@ function renderCaseCard(testCase) {
         <span class="badge danger">${progress.failPercent}% не успешно</span>
       </div>
       <div class="progress"><span style="width:${progress.passPercent}%"></span></div>
-      <div class="step-list">
-        ${testCase.steps
-          .map(
-            (step) => `
-              <div class="step-row">
-                <label>Шаг<input value="${escapeHtml(step.title)}" data-step-title="${testCase.id}:${step.id}" /></label>
-                <label>Статус<select data-step-status="${testCase.id}:${step.id}">${statusOptions(step.status)}</select></label>
-                <button class="ghost" data-delete-step="${testCase.id}:${step.id}">×</button>
-              </div>
-            `,
-          )
-          .join("")}
+      <div class="step-table-wrap">
+        <div class="case-step-grid step-header">
+          <span>Предусловие</span>
+          <span>Шаги</span>
+          <span>ОР</span>
+          <span>ФР</span>
+          <span>Комментарии</span>
+          <span>Статус результата</span>
+          <span></span>
+        </div>
+        <div class="step-list">
+          ${testCase.steps.map((step) => renderEditableStepRow(testCase.id, step)).join("") || empty("Шагов пока нет")}
+        </div>
       </div>
     </article>
   `;
@@ -304,46 +365,107 @@ function renderEditCase() {
     ${topbar(
       "Редактирование",
       escapeHtml(testCase.title),
-      "Добавьте новые шаги в существующий кейс. Статусы уже созданных шагов можно менять прямо в карточках кейсов.",
+      "Добавьте новые строки проверки в существующий кейс. Созданные строки можно редактировать прямо в карточках кейсов.",
       `<button class="secondary" data-view="cases">Назад к кейсам</button>`,
     )}
     <section class="panel form-page">
       <div class="form-stack">
         <div>
-          <h2>Текущие шаги</h2>
-          <div class="step-list" style="margin-top:12px">
+          <h2>Текущие строки</h2>
+          <div class="step-table-wrap" style="margin-top:12px">
+            <div class="case-step-grid step-header">
+              <span>Предусловие</span>
+              <span>Шаги</span>
+              <span>ОР</span>
+              <span>ФР</span>
+              <span>Комментарии</span>
+              <span>Статус результата</span>
+              <span></span>
+            </div>
             ${
-              testCase.steps
-                .map(
-                  (step) => `
-                    <div class="step-row readonly-step">
-                      <span>${escapeHtml(step.title)}</span>
-                      <span class="badge ${step.status === "passed" ? "success" : step.status === "failed" ? "danger" : ""}">${statusLabel(step.status)}</span>
-                      <span></span>
-                    </div>
-                  `,
-                )
-                .join("") || `<p class="muted">Шагов пока нет</p>`
+              testCase.steps.map((step) => renderReadonlyStepRow(step)).join("") || `<p class="muted">Шагов пока нет</p>`
             }
           </div>
         </div>
         <form class="form-stack" data-form="edit-case">
-          <h2>Добавить шаги</h2>
-          <div class="step-list" data-steps>
-            <div class="step-row">
-              <label>Шаг<input name="stepTitle" placeholder="Действие или проверка" /></label>
-              <label>Статус<select name="stepStatus">${statusOptions()}</select></label>
-              <button class="secondary" type="button" data-action="add-step">+</button>
-            </div>
+          <h2>Добавить строки</h2>
+          <div class="step-list step-table" data-steps>
+            ${renderStepInputRow("add")}
           </div>
           <div class="toolbar">
-            <button class="primary">Сохранить шаги</button>
+            <button class="primary">Сохранить строки</button>
             <button class="secondary" type="button" data-view="cases">Отмена</button>
           </div>
         </form>
       </div>
     </section>
   `;
+}
+
+function renderStepInputRow(action = "add") {
+  const isRemove = action === "remove";
+  const buttonClass = isRemove ? "step-action danger-step" : "step-action add-step";
+  const buttonAction = isRemove ? "remove-new-step" : "add-step";
+  const buttonLabel = isRemove ? "-" : "+";
+  return `
+    <div class="case-step-grid step-input-row">
+      <label>Предусловие<textarea name="stepPrecondition" placeholder="Что должно быть готово"></textarea></label>
+      <label>Шаги<textarea name="stepAction" placeholder="Действие или проверка"></textarea></label>
+      <label>ОР<textarea name="stepExpected" placeholder="Ожидаемый результат"></textarea></label>
+      <label>ФР<textarea name="stepActual" placeholder="Фактический результат"></textarea></label>
+      <label>Комментарии<textarea name="stepComment" placeholder="Заметки, ссылки, дефекты"></textarea></label>
+      <label>Статус результата<select name="stepStatus">${statusOptions()}</select></label>
+      <button class="${buttonClass}" type="button" data-action="${buttonAction}">${buttonLabel}</button>
+    </div>
+  `;
+}
+
+function renderEditableStepRow(caseId, step) {
+  return `
+    <div class="case-step-grid step-input-row">
+      <label>Предусловие<textarea data-step-field="${caseId}:${step.id}:precondition">${escapeHtml(step.precondition)}</textarea></label>
+      <label>Шаги<textarea data-step-field="${caseId}:${step.id}:action">${escapeHtml(step.action)}</textarea></label>
+      <label>ОР<textarea data-step-field="${caseId}:${step.id}:expected">${escapeHtml(step.expected)}</textarea></label>
+      <label>ФР<textarea data-step-field="${caseId}:${step.id}:actual">${escapeHtml(step.actual)}</textarea></label>
+      <label>Комментарии<textarea data-step-field="${caseId}:${step.id}:comment">${escapeHtml(step.comment)}</textarea></label>
+      <label>Статус результата<select data-step-status="${caseId}:${step.id}">${statusOptions(step.status)}</select></label>
+      <button class="step-action danger-step" data-delete-step="${caseId}:${step.id}">-</button>
+    </div>
+  `;
+}
+
+function renderReadonlyStepRow(step) {
+  return `
+    <div class="case-step-grid readonly-step">
+      <span>${escapeHtml(step.precondition) || "—"}</span>
+      <span>${escapeHtml(step.action) || "—"}</span>
+      <span>${escapeHtml(step.expected) || "—"}</span>
+      <span>${escapeHtml(step.actual) || "—"}</span>
+      <span>${escapeHtml(step.comment) || "—"}</span>
+      <span class="badge ${step.status === "passed" ? "success" : step.status === "failed" ? "danger" : ""}">${statusLabel(step.status)}</span>
+      <span></span>
+    </div>
+  `;
+}
+
+function collectStepRows(form) {
+  return Array.from(form.querySelectorAll(".step-input-row"))
+    .map((row) =>
+      normalizeStep({
+        id: id("s"),
+        precondition: row.querySelector('[name="stepPrecondition"]').value.trim(),
+        action: row.querySelector('[name="stepAction"]').value.trim(),
+        expected: row.querySelector('[name="stepExpected"]').value.trim(),
+        actual: row.querySelector('[name="stepActual"]').value.trim(),
+        comment: row.querySelector('[name="stepComment"]').value.trim(),
+        status: row.querySelector('[name="stepStatus"]').value,
+      }),
+    )
+    .filter((step) => step.precondition || step.action || step.expected || step.actual || step.comment);
+}
+
+function findStep(caseId, stepId) {
+  return state.cases.find((item) => item.id === caseId)?.steps.find((item) => item.id === stepId);
 }
 
 function renderSuites() {
@@ -640,18 +762,11 @@ app.addEventListener("click", (event) => {
 
   if (button.dataset.action === "add-step") {
     const list = button.closest("[data-steps]");
-    list.insertAdjacentHTML(
-      "beforeend",
-      `<div class="step-row">
-        <label>Шаг<input name="stepTitle" placeholder="Действие или проверка" /></label>
-        <label>Статус<select name="stepStatus">${statusOptions()}</select></label>
-        <button class="ghost" type="button" data-action="remove-new-step">×</button>
-      </div>`,
-    );
+    list.insertAdjacentHTML("beforeend", renderStepInputRow("remove"));
   }
 
   if (button.dataset.action === "remove-new-step") {
-    button.closest(".step-row").remove();
+    button.closest(".step-input-row").remove();
   }
 
   if (button.dataset.filterGroup) {
@@ -729,21 +844,13 @@ app.addEventListener("submit", (event) => {
   }
 
   if (form.dataset.form === "case") {
-    const steps = Array.from(form.querySelectorAll(".step-row"))
-      .map((row) => ({
-        id: id("s"),
-        title: row.querySelector('[name="stepTitle"]').value.trim(),
-        status: row.querySelector('[name="stepStatus"]').value,
-      }))
-      .filter((step) => step.title);
-
     state.cases.unshift({
       id: id("c"),
       title: formData.get("title").trim(),
       description: formData.get("description").trim(),
       ownerId: formData.get("ownerId"),
       groupIds: selectedValues(form.elements.groupIds),
-      steps,
+      steps: collectStepRows(form),
     });
     saveState();
     view = "cases";
@@ -767,15 +874,7 @@ app.addEventListener("submit", (event) => {
     const testCase = state.cases.find((item) => item.id === editingCaseId);
     if (!testCase) return;
 
-    const steps = Array.from(form.querySelectorAll(".step-row"))
-      .map((row) => ({
-        id: id("s"),
-        title: row.querySelector('[name="stepTitle"]').value.trim(),
-        status: row.querySelector('[name="stepStatus"]').value,
-      }))
-      .filter((step) => step.title);
-
-    testCase.steps.push(...steps);
+    testCase.steps.push(...collectStepRows(form));
     saveState();
     view = "cases";
     render();
@@ -819,7 +918,8 @@ app.addEventListener("submit", (event) => {
 app.addEventListener("change", (event) => {
   if (event.target.dataset.stepStatus) {
     const [caseId, stepId] = event.target.dataset.stepStatus.split(":");
-    const step = state.cases.find((item) => item.id === caseId).steps.find((item) => item.id === stepId);
+    const step = findStep(caseId, stepId);
+    if (!step) return;
     step.status = event.target.value;
     saveState();
     render();
@@ -827,10 +927,11 @@ app.addEventListener("change", (event) => {
 });
 
 app.addEventListener("input", (event) => {
-  if (event.target.dataset.stepTitle) {
-    const [caseId, stepId] = event.target.dataset.stepTitle.split(":");
-    const step = state.cases.find((item) => item.id === caseId).steps.find((item) => item.id === stepId);
-    step.title = event.target.value;
+  if (event.target.dataset.stepField) {
+    const [caseId, stepId, field] = event.target.dataset.stepField.split(":");
+    const step = findStep(caseId, stepId);
+    if (!step) return;
+    step[field] = event.target.value;
     saveState();
   }
 });

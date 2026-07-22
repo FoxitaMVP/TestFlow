@@ -328,7 +328,7 @@ h3 {
 }
 
 .form-page {
-  max-width: 760px;
+  width: 100%;
 }
 
 .panel-title {
@@ -426,6 +426,72 @@ h3 {
   align-items: end;
 }
 
+.step-table-wrap {
+  overflow-x: auto;
+}
+
+.case-step-grid {
+  min-width: 1040px;
+  display: grid;
+  grid-template-columns:
+    minmax(140px, 1fr)
+    minmax(180px, 1.25fr)
+    minmax(160px, 1.1fr)
+    minmax(160px, 1.1fr)
+    minmax(160px, 1.1fr)
+    150px
+    38px;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.step-header {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.step-input-row textarea {
+  min-height: 74px;
+}
+
+.step-input-row select,
+.step-input-row button {
+  height: 42px;
+  align-self: end;
+}
+
+.step-action {
+  width: 38px;
+  min-width: 38px;
+  min-height: 42px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.step-action.add-step {
+  background: #008a1e;
+}
+
+.step-action.danger-step {
+  background: #ef1212;
+}
+
+.readonly-step {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.readonly-step span {
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
 .step-list {
   display: grid;
   gap: 9px;
@@ -483,6 +549,15 @@ h3 {
 
   .step-row {
     grid-template-columns: 1fr;
+  }
+
+  .case-step-grid {
+    min-width: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .step-header {
+    display: none;
   }
 
   .toolbar,
