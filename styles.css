@@ -492,6 +492,10 @@ h3 {
   line-height: 1.45;
 }
 
+.status-only > span {
+  display: none;
+}
+
 .step-list {
   display: grid;
   gap: 9px;
@@ -558,6 +562,10 @@ h3 {
 
   .step-header {
     display: none;
+  }
+
+  .status-only > span {
+    display: block;
   }
 
   .toolbar,

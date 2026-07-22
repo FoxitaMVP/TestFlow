@@ -96,6 +96,8 @@ const app = document.querySelector("#app");
 let view = "dashboard";
 let authMode = "login";
 let selectedGroupId = "all";
+let selectedCaseSuiteId = "all";
+let editingSuiteGroupIds = [];
 let editingCaseId = null;
 let editingSuiteId = null;
 
@@ -274,17 +276,17 @@ function stat(label, value) {
 }
 
 function renderCases() {
-  const filtered = filterByGroup(state.cases);
+  const filtered = filterCasesBySuite(state.cases);
   return `
     ${topbar(
       "Тест-кейсы",
       "Кейсы",
-      "Список кейсов, их группы, ответственные и текущий прогресс по строкам проверки.",
+      "Список кейсов, их сьюты, группы, ответственные и текущий прогресс по строкам проверки.",
       `<button class="primary" data-view="create-case">Создать кейс</button>`,
     )}
-    ${renderFilters()}
+    ${renderCaseSuiteFilters()}
     <section>
-      <div class="case-list">${filtered.map(renderCaseCard).join("") || empty("Нет кейсов в выбранной группе")}</div>
+      <div class="case-list">${filtered.map(renderCaseCard).join("") || empty("Нет кейсов в выбранном сьюте")}</div>
     </section>
   `;
 }
@@ -294,7 +296,7 @@ function renderCreateCase() {
     ${topbar(
       "Новый кейс",
       "Создание кейса",
-      "Заполните описание, выберите группы и добавьте строки проверки с ожидаемым и фактическим результатом.",
+      "Заполните описание, выберите сьюты и добавьте строки проверки с ожидаемым и фактическим результатом.",
       `<button class="secondary" data-view="cases">Назад к кейсам</button>`,
     )}
     <section class="panel form-page">
@@ -302,7 +304,7 @@ function renderCreateCase() {
         <label>Название<input name="title" required placeholder="Например, оформление заказа" /></label>
         <label>Описание<textarea name="description" placeholder="Что проверяем"></textarea></label>
         <label>Ответственный<select name="ownerId">${state.users.map((user) => `<option value="${user.id}">${escapeHtml(user.name)}</option>`).join("")}</select></label>
-        <label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions()}</select></label>
+        <label>Сьюты<select name="suiteIds" multiple size="4">${renderSuiteOptions()}</select></label>
         <div class="step-list step-table" data-steps>
           ${renderStepInputRow("add")}
         </div>
@@ -326,10 +328,10 @@ function renderCaseCard(testCase) {
         </div>
         <div class="item-actions">
           <button class="secondary" data-edit-case="${testCase.id}">Редактировать</button>
-          <button class="danger" data-delete-case="${testCase.id}">Удалить</button>
         </div>
       </div>
       <div class="badge-row">
+        ${suiteBadges(testCase.id)}
         ${groupBadges(testCase.groupIds)}
         <span class="badge">${ownerName(testCase.ownerId)}</span>
         <span class="badge success">${progress.passPercent}% успешно</span>
@@ -347,7 +349,7 @@ function renderCaseCard(testCase) {
           <span></span>
         </div>
         <div class="step-list">
-          ${testCase.steps.map((step) => renderEditableStepRow(testCase.id, step)).join("") || empty("Шагов пока нет")}
+          ${testCase.steps.map((step) => renderStatusOnlyStepRow(testCase.id, step)).join("") || empty("Шагов пока нет")}
         </div>
       </div>
     </article>
@@ -365,8 +367,8 @@ function renderEditCase() {
     ${topbar(
       "Редактирование",
       escapeHtml(testCase.title),
-      "Добавьте новые строки проверки в существующий кейс. Созданные строки можно редактировать прямо в карточках кейсов.",
-      `<button class="secondary" data-view="cases">Назад к кейсам</button>`,
+      "Здесь можно редактировать, удалять и добавлять строки проверки, а также менять сьюты кейса.",
+      `<button class="secondary" data-view="cases">Назад к кейсам</button><button class="danger" data-delete-case="${testCase.id}">Удалить кейс</button>`,
     )}
     <section class="panel form-page">
       <div class="form-stack">
@@ -383,11 +385,12 @@ function renderEditCase() {
               <span></span>
             </div>
             ${
-              testCase.steps.map((step) => renderReadonlyStepRow(step)).join("") || `<p class="muted">Шагов пока нет</p>`
+              testCase.steps.map((step) => renderEditableStepRow(testCase.id, step)).join("") || `<p class="muted">Шагов пока нет</p>`
             }
           </div>
         </div>
         <form class="form-stack" data-form="edit-case">
+          <label>Сьюты<select name="suiteIds" multiple size="4">${renderSuiteOptions(suiteIdsForCase(testCase.id))}</select></label>
           <h2>Добавить строки</h2>
           <div class="step-list step-table" data-steps>
             ${renderStepInputRow("add")}
@@ -434,7 +437,7 @@ function renderEditableStepRow(caseId, step) {
   `;
 }
 
-function renderReadonlyStepRow(step) {
+function renderStatusOnlyStepRow(caseId, step) {
   return `
     <div class="case-step-grid readonly-step">
       <span>${escapeHtml(step.precondition) || "—"}</span>
@@ -442,7 +445,7 @@ function renderReadonlyStepRow(step) {
       <span>${escapeHtml(step.expected) || "—"}</span>
       <span>${escapeHtml(step.actual) || "—"}</span>
       <span>${escapeHtml(step.comment) || "—"}</span>
-      <span class="badge ${step.status === "passed" ? "success" : step.status === "failed" ? "danger" : ""}">${statusLabel(step.status)}</span>
+      <label class="status-only"><span>Статус результата</span><select data-step-status="${caseId}:${step.id}">${statusOptions(step.status)}</select></label>
       <span></span>
     </div>
   `;
@@ -477,7 +480,7 @@ function renderSuites() {
       "Список сьютов, привязанных кейсов, групп и агрегированного прогресса.",
       `<button class="primary" data-view="create-suite">Создать сьют</button>`,
     )}
-    ${renderFilters()}
+    ${renderGroupFilters()}
     <section>
       <div class="suite-list">${filtered.map(renderSuiteCard).join("") || empty("Нет сьютов в выбранной группе")}</div>
     </section>
@@ -537,17 +540,27 @@ function renderEditSuite() {
   }
 
   const currentCases = suite.caseIds.map((caseId) => state.cases.find((item) => item.id === caseId)).filter(Boolean);
-  const availableCases = state.cases.filter((item) => !suite.caseIds.includes(item.id));
+  const activeGroupIds = editingSuiteGroupIds;
+  const availableCases = state.cases.filter(
+    (item) =>
+      !suite.caseIds.includes(item.id) &&
+      (!activeGroupIds.length || item.groupIds.some((groupId) => activeGroupIds.includes(groupId))),
+  );
 
   return `
     ${topbar(
       "Редактирование",
       escapeHtml(suite.title),
-      "Добавьте в сьют готовые кейсы из общей базы.",
+      "Выберите группы сьюта и добавьте готовые кейсы только из этих групп.",
       `<button class="secondary" data-view="suites">Назад к сьютам</button>`,
     )}
     <section class="panel form-page">
       <form class="form-stack" data-form="edit-suite">
+        <label>Группы
+          <select name="groupIds" multiple size="4" data-edit-suite-groups>
+            ${renderGroupOptions(activeGroupIds)}
+          </select>
+        </label>
         <div>
           <h2>Текущие кейсы</h2>
           <div class="badge-row" style="margin-top:12px">
@@ -559,9 +572,9 @@ function renderEditSuite() {
             ${availableCases.map((item) => `<option value="${item.id}">${escapeHtml(item.title)}</option>`).join("")}
           </select>
         </label>
-        ${availableCases.length ? "" : `<p class="muted">Все существующие кейсы уже добавлены в этот сьют.</p>`}
+        ${availableCases.length ? "" : `<p class="muted">В выбранных группах нет доступных кейсов для добавления.</p>`}
         <div class="toolbar">
-          <button class="primary" ${availableCases.length ? "" : "disabled"}>Добавить выбранные</button>
+          <button class="primary">Сохранить сьют</button>
           <button class="secondary" type="button" data-view="suites">Отмена</button>
         </div>
       </form>
@@ -692,11 +705,26 @@ function renderGroupOptions(selected = []) {
     .join("");
 }
 
-function renderFilters() {
+function renderSuiteOptions(selected = []) {
+  return state.suites
+    .map((suite) => `<option value="${suite.id}" ${selected.includes(suite.id) ? "selected" : ""}>${escapeHtml(suite.title)}</option>`)
+    .join("");
+}
+
+function renderGroupFilters() {
   return `
     <div class="filters">
       <button class="filter-chip ${selectedGroupId === "all" ? "active" : ""}" data-filter-group="all">Все группы</button>
       ${state.groups.map((group) => `<button class="filter-chip ${selectedGroupId === group.id ? "active" : ""}" data-filter-group="${group.id}">${escapeHtml(group.name)}</button>`).join("")}
+    </div>
+  `;
+}
+
+function renderCaseSuiteFilters() {
+  return `
+    <div class="filters">
+      <button class="filter-chip ${selectedCaseSuiteId === "all" ? "active" : ""}" data-filter-suite="all">Все сьюты</button>
+      ${state.suites.map((suite) => `<button class="filter-chip ${selectedCaseSuiteId === suite.id ? "active" : ""}" data-filter-suite="${suite.id}">${escapeHtml(suite.title)}</button>`).join("")}
     </div>
   `;
 }
@@ -706,6 +734,13 @@ function filterByGroup(items) {
   return items.filter((item) => item.groupIds.includes(selectedGroupId));
 }
 
+function filterCasesBySuite(items) {
+  if (selectedCaseSuiteId === "all") return items;
+  const suite = state.suites.find((item) => item.id === selectedCaseSuiteId);
+  if (!suite) return items;
+  return items.filter((item) => suite.caseIds.includes(item.id));
+}
+
 function groupBadges(groupIds) {
   const badges = groupIds
     .map((groupId) => state.groups.find((group) => group.id === groupId))
@@ -713,6 +748,38 @@ function groupBadges(groupIds) {
     .map((group) => `<span class="badge warn">${escapeHtml(group.name)}</span>`)
     .join("");
   return badges || `<span class="badge">Без группы</span>`;
+}
+
+function suiteIdsForCase(caseId) {
+  return state.suites.filter((suite) => suite.caseIds.includes(caseId)).map((suite) => suite.id);
+}
+
+function suiteBadges(caseId) {
+  const badges = state.suites
+    .filter((suite) => suite.caseIds.includes(caseId))
+    .map((suite) => `<span class="badge">${escapeHtml(suite.title)}</span>`)
+    .join("");
+  return badges || `<span class="badge">Без сьюта</span>`;
+}
+
+function groupIdsFromSuites(suiteIds) {
+  return Array.from(
+    new Set(
+      state.suites
+        .filter((suite) => suiteIds.includes(suite.id))
+        .flatMap((suite) => suite.groupIds),
+    ),
+  );
+}
+
+function syncCaseSuites(caseId, suiteIds) {
+  state.suites.forEach((suite) => {
+    if (suiteIds.includes(suite.id)) {
+      suite.caseIds = Array.from(new Set([...suite.caseIds, caseId]));
+    } else {
+      suite.caseIds = suite.caseIds.filter((idValue) => idValue !== caseId);
+    }
+  });
 }
 
 function ownerName(ownerId) {
@@ -745,6 +812,8 @@ app.addEventListener("click", (event) => {
 
   if (button.dataset.editSuite) {
     editingSuiteId = button.dataset.editSuite;
+    const suite = state.suites.find((item) => item.id === editingSuiteId);
+    editingSuiteGroupIds = suite ? [...suite.groupIds] : [];
     view = "edit-suite";
     render();
   }
@@ -774,6 +843,11 @@ app.addEventListener("click", (event) => {
     render();
   }
 
+  if (button.dataset.filterSuite) {
+    selectedCaseSuiteId = button.dataset.filterSuite;
+    render();
+  }
+
   if (button.dataset.deleteCase) {
     state.cases = state.cases.filter((item) => item.id !== button.dataset.deleteCase);
     state.suites.forEach((suite) => {
@@ -785,6 +859,7 @@ app.addEventListener("click", (event) => {
 
   if (button.dataset.deleteSuite) {
     state.suites = state.suites.filter((item) => item.id !== button.dataset.deleteSuite);
+    if (selectedCaseSuiteId === button.dataset.deleteSuite) selectedCaseSuiteId = "all";
     saveState();
     render();
   }
@@ -795,6 +870,7 @@ app.addEventListener("click", (event) => {
     [...state.users, ...state.cases, ...state.suites].forEach((item) => {
       item.groupIds = item.groupIds.filter((idValue) => idValue !== groupId);
     });
+    editingSuiteGroupIds = editingSuiteGroupIds.filter((idValue) => idValue !== groupId);
     if (selectedGroupId === groupId) selectedGroupId = "all";
     saveState();
     render();
@@ -844,14 +920,18 @@ app.addEventListener("submit", (event) => {
   }
 
   if (form.dataset.form === "case") {
-    state.cases.unshift({
+    const suiteIds = selectedValues(form.elements.suiteIds);
+    const newCase = {
       id: id("c"),
       title: formData.get("title").trim(),
       description: formData.get("description").trim(),
       ownerId: formData.get("ownerId"),
-      groupIds: selectedValues(form.elements.groupIds),
+      groupIds: groupIdsFromSuites(suiteIds),
       steps: collectStepRows(form),
-    });
+    };
+
+    state.cases.unshift(newCase);
+    syncCaseSuites(newCase.id, suiteIds);
     saveState();
     view = "cases";
     render();
@@ -874,7 +954,10 @@ app.addEventListener("submit", (event) => {
     const testCase = state.cases.find((item) => item.id === editingCaseId);
     if (!testCase) return;
 
+    const suiteIds = selectedValues(form.elements.suiteIds);
+    testCase.groupIds = groupIdsFromSuites(suiteIds);
     testCase.steps.push(...collectStepRows(form));
+    syncCaseSuites(testCase.id, suiteIds);
     saveState();
     view = "cases";
     render();
@@ -885,6 +968,7 @@ app.addEventListener("submit", (event) => {
     if (!suite) return;
 
     const addedCaseIds = selectedValues(form.elements.caseIds);
+    suite.groupIds = selectedValues(form.elements.groupIds);
     suite.caseIds = Array.from(new Set([...suite.caseIds, ...addedCaseIds]));
     saveState();
     view = "suites";
@@ -916,6 +1000,12 @@ app.addEventListener("submit", (event) => {
 });
 
 app.addEventListener("change", (event) => {
+  if (event.target.dataset.editSuiteGroups !== undefined) {
+    editingSuiteGroupIds = selectedValues(event.target);
+    render();
+    return;
+  }
+
   if (event.target.dataset.stepStatus) {
     const [caseId, stepId] = event.target.dataset.stepStatus.split(":");
     const step = findStep(caseId, stepId);
