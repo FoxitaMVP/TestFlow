@@ -371,9 +371,12 @@ function renderEditCase() {
       `<button class="secondary" data-view="cases">Назад к кейсам</button><button class="danger" data-delete-case="${testCase.id}">Удалить кейс</button>`,
     )}
     <section class="panel form-page">
-      <div class="form-stack">
+      <form class="form-stack" data-form="edit-case">
+        <label>Название<input name="title" required value="${escapeHtml(testCase.title)}" /></label>
+        <label>Описание<textarea name="description" placeholder="Что проверяем">${escapeHtml(testCase.description)}</textarea></label>
+        <label>Сьюты<select name="suiteIds" multiple size="4">${renderSuiteOptions(suiteIdsForCase(testCase.id))}</select></label>
         <div>
-          <h2>Текущие строки</h2>
+          <h2>Текущие шаги</h2>
           <div class="step-table-wrap" style="margin-top:12px">
             <div class="case-step-grid step-header">
               <span>Предусловие</span>
@@ -389,18 +392,15 @@ function renderEditCase() {
             }
           </div>
         </div>
-        <form class="form-stack" data-form="edit-case">
-          <label>Сьюты<select name="suiteIds" multiple size="4">${renderSuiteOptions(suiteIdsForCase(testCase.id))}</select></label>
-          <h2>Добавить строки</h2>
-          <div class="step-list step-table" data-steps>
-            ${renderStepInputRow("add")}
-          </div>
-          <div class="toolbar">
-            <button class="primary">Сохранить строки</button>
-            <button class="secondary" type="button" data-view="cases">Отмена</button>
-          </div>
-        </form>
-      </div>
+        <h2>Добавить строки</h2>
+        <div class="step-list step-table" data-steps>
+          ${renderStepInputRow("add")}
+        </div>
+        <div class="toolbar">
+          <button class="primary">Сохранить строки</button>
+          <button class="secondary" type="button" data-view="cases">Отмена</button>
+        </div>
+      </form>
     </section>
   `;
 }
@@ -955,6 +955,8 @@ app.addEventListener("submit", (event) => {
     if (!testCase) return;
 
     const suiteIds = selectedValues(form.elements.suiteIds);
+    testCase.title = formData.get("title").trim();
+    testCase.description = formData.get("description").trim();
     testCase.groupIds = groupIdsFromSuites(suiteIds);
     testCase.steps.push(...collectStepRows(form));
     syncCaseSuites(testCase.id, suiteIds);
