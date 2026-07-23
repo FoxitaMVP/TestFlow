@@ -495,7 +495,7 @@ h3 {
     150px
     38px;
   gap: 8px;
-  align-items: stretch;
+  align-items: start;
 }
 
 .step-header {
@@ -513,7 +513,7 @@ h3 {
 .step-input-row select,
 .step-input-row button {
   height: 42px;
-  align-self: end;
+  align-self: start;
 }
 
 .step-action {
@@ -538,6 +538,7 @@ h3 {
 .readonly-step {
   padding: 10px 0;
   border-top: 1px solid var(--line);
+  align-items: start;
 }
 
 .readonly-step span {
@@ -547,6 +548,31 @@ h3 {
 
 .status-only > span {
   display: none;
+}
+
+.case-step-grid > :nth-child(6) {
+  position: sticky;
+  right: 46px;
+  z-index: 2;
+  align-self: start;
+  min-width: 150px;
+  background: var(--panel);
+}
+
+.case-step-grid > :nth-child(7) {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  align-self: start;
+  background: var(--panel);
+}
+
+.readonly-step .status-only {
+  padding: 0 0 8px 8px;
+}
+
+.readonly-step .status-only select {
+  min-height: 42px;
 }
 
 .step-list {
@@ -611,6 +637,13 @@ h3 {
   .case-step-grid {
     min-width: 0;
     grid-template-columns: 1fr;
+  }
+
+  .case-step-grid > :nth-child(6),
+  .case-step-grid > :nth-child(7) {
+    position: static;
+    min-width: 0;
+    padding: 0;
   }
 
   .step-header {
