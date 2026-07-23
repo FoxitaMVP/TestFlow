@@ -90,8 +90,9 @@ const seedState = {
   ],
 };
 
-const state = loadState();
+let state = structuredClone(seedState);
 const app = document.querySelector("#app");
+let apiAvailable = false;
 
 let view = "dashboard";
 let authMode = "login";
@@ -101,9 +102,16 @@ let editingSuiteGroupIds = [];
 let editingCaseId = null;
 let editingSuiteId = null;
 
-function loadState() {
+async function loadState() {
+  const apiState = await loadApiState();
   const saved = localStorage.getItem(storeKey);
-  const loadedState = saved ? JSON.parse(saved) : structuredClone(seedState);
+  const loadedState = apiState || (saved ? JSON.parse(saved) : structuredClone(seedState));
+  if (!loadedState.users?.length) {
+    return structuredClone(seedState);
+  }
+  loadedState.groups = loadedState.groups || [];
+  loadedState.cases = loadedState.cases || [];
+  loadedState.suites = loadedState.suites || [];
   loadedState.cases.forEach((testCase) => {
     testCase.steps = testCase.steps.map(normalizeStep);
   });
@@ -112,6 +120,35 @@ function loadState() {
 
 function saveState() {
   localStorage.setItem(storeKey, JSON.stringify(state));
+  saveApiState(state);
+}
+
+async function loadApiState() {
+  try {
+    const response = await fetch("api/index.php?action=state", { cache: "no-store" });
+    if (!response.ok) return null;
+    const payload = await response.json();
+    apiAvailable = true;
+    return payload;
+  } catch {
+    apiAvailable = false;
+    return null;
+  }
+}
+
+async function saveApiState(nextState) {
+  if (!apiAvailable) return;
+
+  try {
+    const response = await fetch("api/index.php?action=state", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(nextState),
+    });
+    apiAvailable = response.ok;
+  } catch {
+    apiAvailable = false;
+  }
 }
 
 function id(prefix) {
@@ -1028,4 +1065,12 @@ app.addEventListener("input", (event) => {
   }
 });
 
-render();
+async function init() {
+  state = await loadState();
+  render();
+  if (apiAvailable) {
+    saveApiState(state);
+  }
+}
+
+init();
