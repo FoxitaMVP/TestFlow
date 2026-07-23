@@ -221,6 +221,7 @@ function fetchRelationMap(PDO $pdo, string $query): array
 
 function saveState(PDO $pdo, array $state): void
 {
+    $state = normalizeStateReferences($state);
     $pdo->beginTransaction();
 
     try {
@@ -234,6 +235,28 @@ function saveState(PDO $pdo, array $state): void
         $pdo->rollBack();
         throw $error;
     }
+}
+
+function normalizeStateReferences(array $state): array
+{
+    $userIds = array_column($state['users'] ?? [], 'id');
+    if (!isset($state['cases']) || !is_array($state['cases'])) {
+        return $state;
+    }
+
+    foreach ($state['cases'] as &$case) {
+        if (!empty($case['ownerId']) && !in_array($case['ownerId'], $userIds, true)) {
+            $case['ownerId'] = null;
+        }
+
+        $case['assignedUserIds'] = array_values(array_filter(
+            $case['assignedUserIds'] ?? [],
+            fn ($userId) => in_array($userId, $userIds, true)
+        ));
+    }
+    unset($case);
+
+    return $state;
 }
 
 function clearState(PDO $pdo): void

@@ -103,6 +103,7 @@ let apiAvailable = false;
 let view = "dashboard";
 let authMode = "login";
 let authNotice = "";
+let appNotice = "";
 let selectedGroupId = "all";
 let selectedCaseSuiteId = "all";
 let editingSuiteGroupIds = [];
@@ -122,10 +123,18 @@ async function loadState() {
   loadedState.cases = loadedState.cases || [];
   loadedState.suites = loadedState.suites || [];
   loadedState.users.forEach((user) => {
+    const savedUser = savedState && savedState.users ? savedState.users.find((item) => item.id === user.id) : null;
+    if (savedUser) {
+      if (!user.status || (normalizeUserStatus(user.status) === "approved" && normalizeUserStatus(savedUser.status) === "pending")) {
+        user.status = savedUser.status;
+      }
+      if (!user.requestedAt && savedUser.requestedAt) {
+        user.requestedAt = savedUser.requestedAt;
+      }
+    }
     user.role = normalizeRole(user.role);
     user.status = normalizeUserStatus(user.status);
     user.groupIds = user.groupIds || [];
-    const savedUser = savedState && savedState.users ? savedState.users.find((item) => item.id === user.id) : null;
     if (!user.activeSessionToken && savedUser && savedUser.activeSessionToken === session.token) {
       user.activeSessionToken = savedUser.activeSessionToken;
       user.lastActivityAt = savedUser.lastActivityAt;
@@ -194,6 +203,7 @@ function touchSession() {
   if (!isValidSession(session, user)) {
     state.currentUserId = null;
     clearSession();
+    authNotice = "Сессия завершена. Войдите снова.";
     renderAuth();
     return false;
   }
@@ -246,8 +256,14 @@ async function saveApiState(nextState) {
       body: JSON.stringify(nextState),
     });
     apiAvailable = response.ok;
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      console.error("Не удалось сохранить данные в API", payload);
+      notify(payload.error ? `Ошибка сохранения: ${payload.error}` : "Ошибка сохранения в БД.");
+    }
   } catch {
     apiAvailable = false;
+    console.error("API недоступен, данные сохранены только локально.");
   }
 }
 
@@ -447,9 +463,20 @@ function render() {
           <button class="secondary" data-action="logout">Выйти</button>
         </div>
       </aside>
-      <section class="content">${renderView()}</section>
+      <section class="content">${renderAppNotice()}${renderView()}</section>
     </section>
   `;
+}
+
+function renderAppNotice() {
+  if (!appNotice) return "";
+  const text = appNotice;
+  appNotice = "";
+  return `<p class="notice app-notice">${escapeHtml(text)}</p>`;
+}
+
+function notify(text) {
+  appNotice = text;
 }
 
 function navButton(target, icon, label) {
@@ -1307,7 +1334,15 @@ app.addEventListener("click", (event) => {
 
   if (button.dataset.deleteUser) {
     if (!canManageUsers()) return;
-    state.users = state.users.filter((user) => user.id !== button.dataset.deleteUser);
+    const deletedUserId = button.dataset.deleteUser;
+    state.users = state.users.filter((user) => user.id !== deletedUserId);
+    state.cases.forEach((testCase) => {
+      if (testCase.ownerId === deletedUserId) {
+        testCase.ownerId = null;
+      }
+      testCase.assignedUserIds = (testCase.assignedUserIds || []).filter((userId) => userId !== deletedUserId);
+    });
+    notify("Пользователь удалён.");
     saveState();
     render();
   }
@@ -1319,6 +1354,7 @@ app.addEventListener("click", (event) => {
     user.status = "rejected";
     user.activeSessionToken = null;
     user.lastActivityAt = null;
+    notify("Заявка отклонена.");
     saveState();
     render();
   }
@@ -1383,6 +1419,9 @@ app.addEventListener("submit", (event) => {
       state.users.push(user);
       authMode = "login";
       authNotice = "Заявка отправлена. Вход станет доступен после одобрения администратора.";
+      saveState();
+      renderAuth();
+      return;
     }
     saveState();
     render();
@@ -1480,6 +1519,7 @@ app.addEventListener("submit", (event) => {
       password: formData.get("password"),
       groupIds: selectedValues(form.elements.groupIds),
     });
+    notify("Пользователь создан.");
     saveState();
     render();
   }
@@ -1511,6 +1551,7 @@ app.addEventListener("submit", (event) => {
     }
 
     saveState();
+    notify("Пользователь сохранён.");
     render();
   }
 
@@ -1523,6 +1564,7 @@ app.addEventListener("submit", (event) => {
     user.groupIds = selectedValues(form.elements.groupIds);
     user.activeSessionToken = null;
     user.lastActivityAt = null;
+    notify("Заявка одобрена.");
     saveState();
     render();
   }
