@@ -564,11 +564,22 @@ h3 {
   right: 0;
   z-index: 2;
   align-self: start;
-  background: var(--panel);
 }
 
 .readonly-step .status-only {
   padding: 0 0 8px 8px;
+}
+
+.readonly-step > :nth-child(7) {
+  background: var(--panel);
+}
+
+.case-step-grid > .step-action.add-step {
+  background: #008a1e;
+}
+
+.case-step-grid > .step-action.danger-step {
+  background: #ef1212;
 }
 
 .readonly-step .status-only select {
