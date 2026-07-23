@@ -99,7 +99,7 @@ function loadState(PDO $pdo): array
     $suites = fetchSuites($pdo);
 
     return [
-        'currentUserId' => $users[0]['id'] ?? null,
+        'currentUserId' => null,
         'users' => $users,
         'groups' => $groups,
         'cases' => $cases,

@@ -1,7 +1,8 @@
 const storeKey = "testflow-qa-state-v1";
+const sessionKey = "testflow-qa-session-v1";
 
 const seedState = {
-  currentUserId: "u1",
+  currentUserId: null,
   users: [
     { id: "u1", name: "Администратор", email: "admin@test.local", password: "admin123", role: "Admin", groupIds: ["g1"] },
     { id: "u2", name: "Анна QA", email: "anna@test.local", password: "test123", role: "QA", groupIds: ["g2"] },
@@ -108,6 +109,7 @@ async function loadState() {
   const apiState = await loadApiState();
   const saved = localStorage.getItem(storeKey);
   const loadedState = apiState || (saved ? JSON.parse(saved) : structuredClone(seedState));
+  const sessionUserId = localStorage.getItem(sessionKey);
   if (!loadedState.users?.length) {
     return structuredClone(seedState);
   }
@@ -123,12 +125,14 @@ async function loadState() {
     testCase.groupIds = testCase.groupIds || [];
     testCase.assignedUserIds = normalizeAssignedUsers(testCase);
   });
+  loadedState.currentUserId = loadedState.users.some((user) => user.id === sessionUserId) ? sessionUserId : null;
   return loadedState;
 }
 
 function saveState() {
-  localStorage.setItem(storeKey, JSON.stringify(state));
-  saveApiState(state);
+  const persistedState = { ...state, currentUserId: null };
+  localStorage.setItem(storeKey, JSON.stringify(persistedState));
+  saveApiState(persistedState);
 }
 
 async function loadApiState() {
@@ -1056,6 +1060,7 @@ app.addEventListener("click", (event) => {
 
   if (button.dataset.action === "logout") {
     state.currentUserId = null;
+    localStorage.removeItem(sessionKey);
     saveState();
     renderAuth();
   }
@@ -1142,14 +1147,16 @@ app.addEventListener("submit", (event) => {
         return;
       }
       state.currentUserId = user.id;
+      localStorage.setItem(sessionKey, user.id);
     } else {
       if (state.users.some((item) => item.email.toLowerCase() === email)) {
         alert("Пользователь с таким email уже есть");
         return;
       }
-      const user = { id: id("u"), name: formData.get("name").trim(), email, password, role: "Tester", groupIds: [] };
+      const user = { id: id("u"), name: formData.get("name").trim(), email, password, role: "QA", groupIds: [] };
       state.users.push(user);
       state.currentUserId = user.id;
+      localStorage.setItem(sessionKey, user.id);
     }
     saveState();
     render();
