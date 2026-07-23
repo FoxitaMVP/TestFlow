@@ -112,6 +112,8 @@ let editingCaseId = null;
 let editingSuiteId = null;
 let userModalMode = null;
 let editingUserId = null;
+let groupModalMode = null;
+let editingGroupId = null;
 
 async function loadState() {
   const apiState = await loadApiState();
@@ -933,69 +935,74 @@ function renderEditSuite() {
 
 function renderGroups() {
   if (!isAdmin() && !isManager()) return forbidden();
-  const form = canManageGroups()
-    ? `<form class="panel form-stack" data-form="group">
-        <h2>Новая группа</h2>
-        <label>Название<input name="name" required placeholder="Например, Billing" /></label>
-        <label>Описание<textarea name="description" placeholder="Контекст группы"></textarea></label>
-        <button class="primary">Создать группу</button>
-      </form>`
-    : `<div class="panel"><h2>Группы</h2><p class="muted">Группы доступны только для просмотра.</p></div>`;
 
   return `
-    ${topbar("Группы", "Группы пользователей, кейсов и сьютов", "Используйте группы как продуктовые зоны, команды или типы регрессии.")}
-    <section class="grid two-col">
-      ${form}
-      <div class="grid three-col">
-        ${visibleGroups().map(renderGroupCard).join("") || empty("Групп пока нет")}
+    ${topbar(
+      "Группы",
+      "Группы пользователей, кейсов и сьютов",
+      "Открывайте группу для редактирования названия, описания и просмотра состава.",
+      canManageGroups() ? `<button class="primary" data-open-group-create>Новая группа</button>` : "",
+    )}
+    <section class="panel">
+      <div class="data-table group-table">
+        <div class="data-table-row group-table-row data-table-head">
+          <span>Название</span>
+          <span>Описание</span>
+          <span>Кейсы</span>
+          <span>Сьюты</span>
+          <span>Пользователи</span>
+          <span></span>
+        </div>
+        ${visibleGroups().map(renderGroupRow).join("") || empty("Групп пока нет")}
       </div>
     </section>
+    ${renderGroupModal()}
   `;
 }
 
-function renderGroupCard(group) {
+function renderGroupRow(group) {
   const caseCount = state.cases.filter((item) => item.groupIds.includes(group.id)).length;
   const suiteCount = state.suites.filter((item) => item.groupIds.includes(group.id)).length;
   const userCount = state.users.filter((item) => item.groupIds.includes(group.id)).length;
-  if (canManageGroups()) {
-    return `
-      <article class="item-card">
-        <form class="form-stack" data-form="group-update" data-group-id="${group.id}">
-          <div class="item-head">
-            <div>
-              <h3>${escapeHtml(group.name)}</h3>
-              <p class="muted">${escapeHtml(group.description)}</p>
-            </div>
-            ${isAdmin() ? `<button class="danger" type="button" data-delete-group="${group.id}">Удалить</button>` : ""}
-          </div>
-          <label>Название<input name="name" required value="${escapeHtml(group.name)}" /></label>
-          <label>Описание<textarea name="description" placeholder="Контекст группы">${escapeHtml(group.description)}</textarea></label>
-          <div class="badge-row">
-            <span class="badge">${caseCount} кейсов</span>
-            <span class="badge">${suiteCount} сьютов</span>
-            <span class="badge">${userCount} пользователей</span>
-          </div>
-          <button class="secondary">Сохранить группу</button>
-        </form>
-      </article>
-    `;
-  }
+  return `
+    <div class="data-table-row group-table-row">
+      <strong>${escapeHtml(group.name)}</strong>
+      <span>${escapeHtml(group.description || "Без описания")}</span>
+      <span>${caseCount}</span>
+      <span>${suiteCount}</span>
+      <span>${userCount}</span>
+      <button class="secondary" data-open-group-edit="${group.id}">Открыть</button>
+    </div>
+  `;
+}
+
+function renderGroupModal() {
+  if (!groupModalMode) return "";
+  const isCreate = groupModalMode === "create";
+  const group = isCreate ? null : state.groups.find((item) => item.id === editingGroupId);
+  if (!isCreate && !group) return "";
+  const caseCount = group ? state.cases.filter((item) => item.groupIds.includes(group.id)).length : 0;
+  const suiteCount = group ? state.suites.filter((item) => item.groupIds.includes(group.id)).length : 0;
+  const userCount = group ? state.users.filter((item) => item.groupIds.includes(group.id)).length : 0;
 
   return `
-    <article class="item-card">
-      <div class="item-head">
-        <div>
-          <h3>${escapeHtml(group.name)}</h3>
-          <p class="muted">${escapeHtml(group.description)}</p>
+    <div class="modal-backdrop" data-close-group-modal>
+      <section class="modal-panel" role="dialog" aria-modal="true">
+        <div class="panel-title">
+          <h2>${isCreate ? "Новая группа" : escapeHtml(group.name)}</h2>
+          <button class="secondary" data-close-group-modal type="button">Закрыть</button>
         </div>
-        ${isAdmin() ? `<button class="danger" data-delete-group="${group.id}">Удалить</button>` : ""}
-      </div>
-      <div class="badge-row">
-        <span class="badge">${caseCount} кейсов</span>
-        <span class="badge">${suiteCount} сьютов</span>
-        <span class="badge">${userCount} пользователей</span>
-      </div>
-    </article>
+        <form class="form-stack" data-form="${isCreate ? "group" : "group-update"}" ${isCreate ? "" : `data-group-id="${group.id}"`}>
+          <label>Название<input name="name" required placeholder="Например, Billing" value="${isCreate ? "" : escapeHtml(group.name)}" /></label>
+          <label>Описание<textarea name="description" placeholder="Контекст группы">${isCreate ? "" : escapeHtml(group.description)}</textarea></label>
+          ${isCreate ? "" : `<div class="badge-row"><span class="badge">${caseCount} кейсов</span><span class="badge">${suiteCount} сьютов</span><span class="badge">${userCount} пользователей</span></div>`}
+          <div class="toolbar">
+            <button class="primary">${isCreate ? "Создать группу" : "Сохранить группу"}</button>
+            ${!isCreate && isAdmin() ? `<button class="danger" type="button" data-delete-group="${group.id}">Удалить</button>` : ""}
+          </div>
+        </form>
+      </section>
+    </div>
   `;
 }
 
@@ -1329,6 +1336,13 @@ function selectedValues(select) {
 }
 
 app.addEventListener("click", (event) => {
+  if (event.target.dataset && event.target.dataset.closeGroupModal !== undefined) {
+    groupModalMode = null;
+    editingGroupId = null;
+    render();
+    return;
+  }
+
   if (event.target.dataset && event.target.dataset.closeUserModal !== undefined) {
     userModalMode = null;
     editingUserId = null;
@@ -1345,6 +1359,23 @@ app.addEventListener("click", (event) => {
     view = button.dataset.view;
     userModalMode = null;
     editingUserId = null;
+    groupModalMode = null;
+    editingGroupId = null;
+    render();
+  }
+
+  if (button.dataset.openGroupCreate !== undefined) {
+    if (!canManageGroups()) return;
+    groupModalMode = "create";
+    editingGroupId = null;
+    render();
+  }
+
+  if (button.dataset.openGroupEdit) {
+    const group = state.groups.find((item) => item.id === button.dataset.openGroupEdit);
+    if (!group || !canManageGroups()) return;
+    groupModalMode = "edit";
+    editingGroupId = group.id;
     render();
   }
 
@@ -1457,6 +1488,8 @@ app.addEventListener("click", (event) => {
     });
     editingSuiteGroupIds = editingSuiteGroupIds.filter((idValue) => idValue !== groupId);
     if (selectedGroupId === groupId) selectedGroupId = "all";
+    groupModalMode = null;
+    editingGroupId = null;
     notify("Группа удалена.");
     saveState();
     render();
@@ -1641,6 +1674,8 @@ app.addEventListener("submit", (event) => {
       name: formData.get("name").trim(),
       description: formData.get("description").trim(),
     });
+    groupModalMode = null;
+    editingGroupId = null;
     notify("Группа создана.");
     saveState();
     render();
@@ -1652,6 +1687,8 @@ app.addEventListener("submit", (event) => {
     if (!group) return;
     group.name = formData.get("name").trim();
     group.description = formData.get("description").trim();
+    groupModalMode = null;
+    editingGroupId = null;
     notify("Группа сохранена.");
     saveState();
     render();

@@ -364,22 +364,32 @@ h3 {
   gap: 12px;
 }
 
+.data-table,
 .user-table {
   display: grid;
   gap: 0;
   overflow-x: auto;
 }
 
+.data-table-row,
 .user-table-row {
   min-width: 860px;
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.2fr) 110px 160px minmax(180px, 1fr) 120px;
   gap: 12px;
   align-items: center;
   padding: 12px 0;
   border-top: 1px solid var(--line);
 }
 
+.user-table-row {
+  grid-template-columns: minmax(160px, 1fr) minmax(220px, 1.2fr) 110px 160px minmax(180px, 1fr) 120px;
+}
+
+.group-table-row {
+  grid-template-columns: minmax(160px, 1fr) minmax(240px, 1.6fr) 90px 90px 120px 120px;
+}
+
+.data-table-head,
 .user-table-head {
   border-top: 0;
   color: var(--muted);
