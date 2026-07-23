@@ -110,6 +110,8 @@ let expandedCaseId = null;
 let editingSuiteGroupIds = [];
 let editingCaseId = null;
 let editingSuiteId = null;
+let userModalMode = null;
+let editingUserId = null;
 
 async function loadState() {
   const apiState = await loadApiState();
@@ -358,7 +360,7 @@ function canManageSuites(user = currentUser()) {
 }
 
 function canManageGroups(user = currentUser()) {
-  return isAdmin(user);
+  return isAdmin(user) || isManager(user);
 }
 
 function canManageUsers(user = currentUser()) {
@@ -390,6 +392,10 @@ function canUseCase(testCase, user = currentUser()) {
 function canEditUserGroups(targetUser, user = currentUser()) {
   if (isAdmin(user)) return true;
   return isManager(user) && normalizeRole(targetUser.role) === "QA";
+}
+
+function canViewUserDetails(targetUser, user = currentUser()) {
+  return canManageUsers(user) || isManager(user) || canEditUserGroups(targetUser, user);
 }
 
 function normalizeAssignedUsers(testCase) {
@@ -927,14 +933,14 @@ function renderEditSuite() {
 
 function renderGroups() {
   if (!isAdmin() && !isManager()) return forbidden();
-  const form = isAdmin()
+  const form = canManageGroups()
     ? `<form class="panel form-stack" data-form="group">
         <h2>Новая группа</h2>
         <label>Название<input name="name" required placeholder="Например, Billing" /></label>
         <label>Описание<textarea name="description" placeholder="Контекст группы"></textarea></label>
         <button class="primary">Создать группу</button>
       </form>`
-    : `<div class="panel"><h2>Группы</h2><p class="muted">Manager видит группы для назначения QA, создание и удаление доступны Admin.</p></div>`;
+    : `<div class="panel"><h2>Группы</h2><p class="muted">Группы доступны только для просмотра.</p></div>`;
 
   return `
     ${topbar("Группы", "Группы пользователей, кейсов и сьютов", "Используйте группы как продуктовые зоны, команды или типы регрессии.")}
@@ -951,6 +957,30 @@ function renderGroupCard(group) {
   const caseCount = state.cases.filter((item) => item.groupIds.includes(group.id)).length;
   const suiteCount = state.suites.filter((item) => item.groupIds.includes(group.id)).length;
   const userCount = state.users.filter((item) => item.groupIds.includes(group.id)).length;
+  if (canManageGroups()) {
+    return `
+      <article class="item-card">
+        <form class="form-stack" data-form="group-update" data-group-id="${group.id}">
+          <div class="item-head">
+            <div>
+              <h3>${escapeHtml(group.name)}</h3>
+              <p class="muted">${escapeHtml(group.description)}</p>
+            </div>
+            ${isAdmin() ? `<button class="danger" type="button" data-delete-group="${group.id}">Удалить</button>` : ""}
+          </div>
+          <label>Название<input name="name" required value="${escapeHtml(group.name)}" /></label>
+          <label>Описание<textarea name="description" placeholder="Контекст группы">${escapeHtml(group.description)}</textarea></label>
+          <div class="badge-row">
+            <span class="badge">${caseCount} кейсов</span>
+            <span class="badge">${suiteCount} сьютов</span>
+            <span class="badge">${userCount} пользователей</span>
+          </div>
+          <button class="secondary">Сохранить группу</button>
+        </form>
+      </article>
+    `;
+  }
+
   return `
     <article class="item-card">
       <div class="item-head">
@@ -972,24 +1002,28 @@ function renderGroupCard(group) {
 function renderUsers() {
   if (!isAdmin() && !isManager()) return forbidden();
   const users = isAdmin() ? state.users : state.users.filter((user) => normalizeUserStatus(user.status) === "approved");
-  const createForm = isAdmin()
-    ? `<form class="panel form-stack" data-form="user">
-        <h2>Новый пользователь</h2>
-        <label>Имя<input name="name" required placeholder="Имя пользователя" /></label>
-        <label>Email<input name="email" type="email" required placeholder="name@company.com" /></label>
-        <label>Роль<select name="role" required>${renderRoleOptions()}</select></label>
-        <label>Пароль<input name="password" type="password" required placeholder="Минимум 4 символа" /></label>
-        <label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions()}</select></label>
-        <button class="primary">Создать пользователя</button>
-      </form>`
-    : `<div class="panel"><h2>Назначение QA</h2><p class="muted">Manager может назначать тестеров в группы. Создание, удаление и смена ролей доступны Admin.</p></div>`;
 
   return `
-    ${topbar("Пользователи", "Команды и доступ", "Добавляйте пользователей и включайте их в группы тестирования.")}
-    <section class="grid two-col">
-      ${createForm}
-      <div class="user-list">${users.map(renderUserCard).join("")}</div>
+    ${topbar(
+      "Пользователи",
+      "Команды и доступ",
+      isAdmin() ? "Открывайте карточку пользователя для редактирования или добавляйте нового." : "Manager может открывать QA и назначать их в группы.",
+      isAdmin() ? `<button class="primary" data-open-user-create>Новый пользователь</button>` : "",
+    )}
+    <section class="panel">
+      <div class="user-table">
+        <div class="user-table-row user-table-head">
+          <span>Имя</span>
+          <span>Email</span>
+          <span>Роль</span>
+          <span>Статус</span>
+          <span>Группы</span>
+          <span></span>
+        </div>
+        ${users.map(renderUserRow).join("") || empty("Пользователей пока нет")}
+      </div>
     </section>
+    ${renderUserModal()}
   `;
 }
 
@@ -1028,28 +1062,60 @@ function renderRegistrationRequestCard(user) {
   `;
 }
 
-function renderUserCard(user) {
-  const editableGroups = canEditUserGroups(user);
-  const editableUser = canManageUsers();
+function renderUserRow(user) {
+  const groups = user.groupIds
+    .map((groupId) => state.groups.find((group) => group.id === groupId))
+    .filter(Boolean)
+    .map((group) => group.name)
+    .join(", ");
+
   return `
-    <article class="item-card">
-      <form class="form-stack" data-form="user-update" data-user-id="${user.id}">
-        <div class="item-head">
-          <div>
-            <h3>${escapeHtml(user.name)}</h3>
-            <p class="muted">${escapeHtml(user.email)} · ${escapeHtml(roleLabel(user.role))} · ${escapeHtml(userStatusLabel(user.status))}</p>
-          </div>
-          ${editableUser ? `<button class="danger" type="button" data-delete-user="${user.id}" ${user.id === state.currentUserId ? "disabled" : ""}>Удалить</button>` : ""}
+    <div class="user-table-row">
+      <strong>${escapeHtml(user.name)}</strong>
+      <span>${escapeHtml(user.email)}</span>
+      <span>${escapeHtml(roleLabel(user.role))}</span>
+      <span>${escapeHtml(userStatusLabel(user.status))}</span>
+      <span>${escapeHtml(groups || "Без группы")}</span>
+      <button class="secondary" data-open-user-edit="${user.id}">Открыть</button>
+    </div>
+  `;
+}
+
+function renderUserModal() {
+  if (!userModalMode) return "";
+  const isCreate = userModalMode === "create";
+  const user = isCreate ? null : state.users.find((item) => item.id === editingUserId);
+  if (!isCreate && !user) return "";
+  const editableGroups = isCreate || canEditUserGroups(user);
+  const editableUser = isCreate || canManageUsers();
+
+  return `
+    <div class="modal-backdrop" data-close-user-modal>
+      <section class="modal-panel" role="dialog" aria-modal="true">
+        <div class="panel-title">
+          <h2>${isCreate ? "Новый пользователь" : escapeHtml(user.name)}</h2>
+          <button class="secondary" data-close-user-modal type="button">Закрыть</button>
         </div>
-        ${editableUser ? `<label>Имя<input name="name" required value="${escapeHtml(user.name)}" /></label>` : ""}
-        ${editableUser ? `<label>Email<input name="email" type="email" required value="${escapeHtml(user.email)}" /></label>` : ""}
-        ${editableUser ? `<label>Роль<select name="role">${renderRoleOptions(user.role)}</select></label>` : ""}
-        ${editableUser ? `<label>Статус<select name="status">${renderUserStatusOptions(user.status)}</select></label>` : ""}
-        ${editableUser ? `<label>Пароль<input name="password" type="password" required value="${escapeHtml(user.password)}" /></label>` : ""}
-        ${editableGroups ? `<label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions(user.groupIds)}</select></label>` : `<div class="badge-row">${groupBadges(user.groupIds)}</div>`}
-        ${editableUser || editableGroups ? `<button class="secondary">Сохранить пользователя</button>` : ""}
-      </form>
-    </article>
+        <form class="form-stack" data-form="${isCreate ? "user" : "user-update"}" ${isCreate ? "" : `data-user-id="${user.id}"`}>
+          ${!editableUser && !isCreate ? `<div class="detail-list">
+            <div><span class="muted">Имя</span><strong>${escapeHtml(user.name)}</strong></div>
+            <div><span class="muted">Email</span><strong>${escapeHtml(user.email)}</strong></div>
+            <div><span class="muted">Роль</span><strong>${escapeHtml(roleLabel(user.role))}</strong></div>
+            <div><span class="muted">Статус</span><strong>${escapeHtml(userStatusLabel(user.status))}</strong></div>
+          </div>` : ""}
+          ${editableUser ? `<label>Имя<input name="name" required placeholder="Имя пользователя" value="${isCreate ? "" : escapeHtml(user.name)}" /></label>` : ""}
+          ${editableUser ? `<label>Email<input name="email" type="email" required placeholder="name@company.com" value="${isCreate ? "" : escapeHtml(user.email)}" /></label>` : ""}
+          ${editableUser ? `<label>Роль<select name="role" required>${renderRoleOptions(isCreate ? "QA" : user.role)}</select></label>` : ""}
+          ${editableUser && !isCreate ? `<label>Статус<select name="status">${renderUserStatusOptions(user.status)}</select></label>` : ""}
+          ${editableUser ? `<label>Пароль<input name="password" type="password" required placeholder="Минимум 4 символа" value="${isCreate ? "" : escapeHtml(user.password)}" /></label>` : ""}
+          ${editableGroups ? `<label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions(isCreate ? [] : user.groupIds)}</select></label>` : `<div class="badge-row">${groupBadges(user.groupIds)}</div>`}
+          <div class="toolbar">
+            ${editableUser || editableGroups ? `<button class="primary">${isCreate ? "Создать пользователя" : "Сохранить пользователя"}</button>` : ""}
+            ${!isCreate && canManageUsers() ? `<button class="danger" type="button" data-delete-user="${user.id}" ${user.id === state.currentUserId ? "disabled" : ""}>Удалить</button>` : ""}
+          </div>
+        </form>
+      </section>
+    </div>
   `;
 }
 
@@ -1263,6 +1329,13 @@ function selectedValues(select) {
 }
 
 app.addEventListener("click", (event) => {
+  if (event.target.dataset && event.target.dataset.closeUserModal !== undefined) {
+    userModalMode = null;
+    editingUserId = null;
+    render();
+    return;
+  }
+
   const button = event.target.closest("button");
   if (!button) return;
   if (state.currentUserId && button.dataset.action !== "logout" && !touchSession()) return;
@@ -1270,6 +1343,29 @@ app.addEventListener("click", (event) => {
   if (button.dataset.view) {
     if (!canOpenView(button.dataset.view)) return;
     view = button.dataset.view;
+    userModalMode = null;
+    editingUserId = null;
+    render();
+  }
+
+  if (button.dataset.openUserCreate !== undefined) {
+    if (!canManageUsers()) return;
+    userModalMode = "create";
+    editingUserId = null;
+    render();
+  }
+
+  if (button.dataset.openUserEdit) {
+    const user = state.users.find((item) => item.id === button.dataset.openUserEdit);
+    if (!user || !canViewUserDetails(user)) return;
+    userModalMode = "edit";
+    editingUserId = user.id;
+    render();
+  }
+
+  if (button.dataset.closeUserModal !== undefined) {
+    userModalMode = null;
+    editingUserId = null;
     render();
   }
 
@@ -1376,6 +1472,8 @@ app.addEventListener("click", (event) => {
       }
       testCase.assignedUserIds = (testCase.assignedUserIds || []).filter((userId) => userId !== deletedUserId);
     });
+    userModalMode = null;
+    editingUserId = null;
     notify("Пользователь удалён.");
     saveState();
     render();
@@ -1537,13 +1635,24 @@ app.addEventListener("submit", (event) => {
   }
 
   if (form.dataset.form === "group") {
-    if (!isAdmin()) return;
+    if (!canManageGroups()) return;
     state.groups.unshift({
       id: id("g"),
       name: formData.get("name").trim(),
       description: formData.get("description").trim(),
     });
     notify("Группа создана.");
+    saveState();
+    render();
+  }
+
+  if (form.dataset.form === "group-update") {
+    if (!canManageGroups()) return;
+    const group = state.groups.find((item) => item.id === form.dataset.groupId);
+    if (!group) return;
+    group.name = formData.get("name").trim();
+    group.description = formData.get("description").trim();
+    notify("Группа сохранена.");
     saveState();
     render();
   }
@@ -1559,6 +1668,8 @@ app.addEventListener("submit", (event) => {
       password: formData.get("password"),
       groupIds: selectedValues(form.elements.groupIds),
     });
+    userModalMode = null;
+    editingUserId = null;
     notify("Пользователь создан.");
     saveState();
     render();
@@ -1591,6 +1702,8 @@ app.addEventListener("submit", (event) => {
     }
 
     saveState();
+    userModalMode = null;
+    editingUserId = null;
     notify("Пользователь сохранён.");
     render();
   }
