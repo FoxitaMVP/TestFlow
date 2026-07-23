@@ -96,7 +96,7 @@ const seedState = {
   ],
 };
 
-let state = structuredClone(seedState);
+let state = cloneState(seedState);
 const app = document.querySelector("#app");
 let apiAvailable = false;
 
@@ -112,10 +112,10 @@ async function loadState() {
   const apiState = await loadApiState();
   const saved = localStorage.getItem(storeKey);
   const savedState = saved ? JSON.parse(saved) : null;
-  const loadedState = apiState || savedState || structuredClone(seedState);
+  const loadedState = apiState || savedState || cloneState(seedState);
   const session = currentSession();
-  if (!loadedState.users?.length) {
-    return structuredClone(seedState);
+  if (!loadedState.users || !loadedState.users.length) {
+    return cloneState(seedState);
   }
   loadedState.groups = loadedState.groups || [];
   loadedState.cases = loadedState.cases || [];
@@ -123,8 +123,8 @@ async function loadState() {
   loadedState.users.forEach((user) => {
     user.role = normalizeRole(user.role);
     user.groupIds = user.groupIds || [];
-    const savedUser = savedState?.users?.find((item) => item.id === user.id);
-    if (!user.activeSessionToken && savedUser?.activeSessionToken === session.token) {
+    const savedUser = savedState && savedState.users ? savedState.users.find((item) => item.id === user.id) : null;
+    if (!user.activeSessionToken && savedUser && savedUser.activeSessionToken === session.token) {
       user.activeSessionToken = savedUser.activeSessionToken;
       user.lastActivityAt = savedUser.lastActivityAt;
     }
@@ -146,6 +146,10 @@ function saveState() {
   const persistedState = { ...state, currentUserId: null };
   localStorage.setItem(storeKey, JSON.stringify(persistedState));
   saveApiState(persistedState);
+}
+
+function cloneState(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function currentSession() {
@@ -176,7 +180,7 @@ function clearSession() {
 }
 
 function isValidSession(session, user) {
-  if (!session?.userId || !user) return false;
+  if (!session || !session.userId || !user) return false;
   if (!session.token || user.activeSessionToken !== session.token) return false;
   return Date.now() - Number(session.lastActivityAt || 0) <= sessionTimeoutMs;
 }
@@ -208,7 +212,7 @@ async function checkRemoteSession() {
 
   const session = currentSession();
   const apiState = await loadApiState();
-  const remoteUser = apiState?.users?.find((item) => item.id === user.id);
+  const remoteUser = apiState && apiState.users ? apiState.users.find((item) => item.id === user.id) : null;
   if (!isValidSession(session, remoteUser)) {
     state.currentUserId = null;
     clearSession();
@@ -265,11 +269,11 @@ function roleLabel(role) {
 }
 
 function isAdmin(user = currentUser()) {
-  return normalizeRole(user?.role) === "Admin";
+  return normalizeRole(user && user.role) === "Admin";
 }
 
 function isManager(user = currentUser()) {
-  return normalizeRole(user?.role) === "Manager";
+  return normalizeRole(user && user.role) === "Manager";
 }
 
 function canManageCases(user = currentUser()) {
@@ -327,7 +331,8 @@ function canEditUserGroups(targetUser, user = currentUser()) {
 
 function normalizeAssignedUsers(testCase) {
   const assigned = testCase.assignedUserIds || [];
-  const fallbackOwner = normalizeRole(state.users.find((user) => user.id === testCase.ownerId)?.role) === "QA" ? [testCase.ownerId] : [];
+  const owner = state.users.find((user) => user.id === testCase.ownerId);
+  const fallbackOwner = normalizeRole(owner && owner.role) === "QA" ? [testCase.ownerId] : [];
   return Array.from(new Set([...assigned, ...fallbackOwner].filter(Boolean)));
 }
 
@@ -337,11 +342,11 @@ function hasSharedGroup(groupIds = [], userGroupIds = []) {
 
 function escapeHtml(value = "") {
   return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function normalizeStep(step) {
@@ -718,7 +723,8 @@ function collectStepRows(form) {
 }
 
 function findStep(caseId, stepId) {
-  return state.cases.find((item) => item.id === caseId)?.steps.find((item) => item.id === stepId);
+  const testCase = state.cases.find((item) => item.id === caseId);
+  return testCase ? testCase.steps.find((item) => item.id === stepId) : null;
 }
 
 function renderSuites() {
