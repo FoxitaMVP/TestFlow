@@ -106,6 +106,7 @@ let authNotice = "";
 let appNotice = "";
 let selectedGroupId = "all";
 let selectedCaseSuiteId = "all";
+let expandedCaseId = null;
 let editingSuiteGroupIds = [];
 let editingCaseId = null;
 let editingSuiteId = null;
@@ -643,17 +644,16 @@ function renderCreateCase() {
 function renderCaseCard(testCase) {
   const progress = progressForCase(testCase);
   const editable = canEditCase(testCase);
+  const expanded = expandedCaseId === testCase.id;
   return `
-    <article class="item-card">
-      <div class="item-head">
+    <article class="item-card case-card ${expanded ? "expanded" : ""}">
+      <button class="case-summary" data-toggle-case="${testCase.id}" aria-expanded="${expanded ? "true" : "false"}">
         <div>
-          <h3>${escapeHtml(testCase.title)}</h3>
+          <h3><span class="case-caret">${expanded ? "−" : "+"}</span>${escapeHtml(testCase.title)}</h3>
           <p class="muted">${escapeHtml(testCase.description)}</p>
         </div>
-        <div class="item-actions">
-          ${editable ? `<button class="secondary" data-edit-case="${testCase.id}">Редактировать</button>` : ""}
-        </div>
-      </div>
+        <span class="badge">${testCase.steps.length} шагов</span>
+      </button>
       <div class="badge-row">
         ${suiteBadges(testCase.id)}
         ${groupBadges(testCase.groupIds)}
@@ -663,6 +663,11 @@ function renderCaseCard(testCase) {
         <span class="badge danger">${progress.failPercent}% не успешно</span>
       </div>
       ${progressBar(progress)}
+      ${
+        expanded
+          ? `<div class="item-actions">
+          ${editable ? `<button class="secondary" data-edit-case="${testCase.id}">Редактировать</button>` : ""}
+        </div>
       <div class="step-table-wrap">
         <div class="case-step-grid step-header">
           <span>Предусловие</span>
@@ -676,7 +681,9 @@ function renderCaseCard(testCase) {
         <div class="step-list">
           ${testCase.steps.map((step) => renderStatusOnlyStepRow(testCase.id, step)).join("") || empty("Шагов пока нет")}
         </div>
-      </div>
+      </div>`
+          : ""
+      }
     </article>
   `;
 }
@@ -1263,6 +1270,11 @@ app.addEventListener("click", (event) => {
   if (button.dataset.view) {
     if (!canOpenView(button.dataset.view)) return;
     view = button.dataset.view;
+    render();
+  }
+
+  if (button.dataset.toggleCase) {
+    expandedCaseId = expandedCaseId === button.dataset.toggleCase ? null : button.dataset.toggleCase;
     render();
   }
 

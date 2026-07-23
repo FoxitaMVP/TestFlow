@@ -383,6 +383,35 @@ h3 {
   align-items: center;
 }
 
+.case-summary {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.case-summary h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.case-caret {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--panel-soft);
+  color: var(--accent-dark);
+  font-weight: 900;
+}
+
 .badge-row {
   display: flex;
   flex-wrap: wrap;
