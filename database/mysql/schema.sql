@@ -67,6 +67,15 @@ CREATE TABLE test_case_groups (
   CONSTRAINT test_case_groups_group_fk FOREIGN KEY (group_id) REFERENCES qa_groups (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+CREATE TABLE test_case_assignees (
+  test_case_id VARCHAR(40) NOT NULL,
+  user_id VARCHAR(40) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (test_case_id, user_id),
+  CONSTRAINT test_case_assignees_case_fk FOREIGN KEY (test_case_id) REFERENCES test_cases (id) ON DELETE CASCADE,
+  CONSTRAINT test_case_assignees_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE suites (
   id VARCHAR(40) NOT NULL,
   title VARCHAR(180) NOT NULL,

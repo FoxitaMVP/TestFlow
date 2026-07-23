@@ -12,9 +12,10 @@
 - `users` - пользователи для авторизации.
 - `qa_groups` - группы пользователей, кейсов и сьютов.
 - `test_cases` - кейсы.
+- `test_case_assignees` - назначенные QA для работы с кейсами.
 - `test_case_steps` - строки/шаги кейса: предусловие, шаги, ОР, ФР, комментарии, статус.
 - `suites` - сьюты.
-- `user_groups`, `test_case_groups`, `suite_groups`, `suite_cases` - связи многие-ко-многим.
+- `user_groups`, `test_case_groups`, `test_case_assignees`, `suite_groups`, `suite_cases` - связи многие-ко-многим.
 
 ## MySQL
 

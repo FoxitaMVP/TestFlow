@@ -43,6 +43,7 @@ function connectDatabase(array $config): PDO
         $pdo = new PDO('sqlite:' . $config['sqlite']['path']);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
         $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+        ensureSupplementalSchema($pdo, 'sqlite');
         return $pdo;
     }
 
@@ -52,7 +53,36 @@ function connectDatabase(array $config): PDO
     $pdo = new PDO($dsn, $mysql['user'], $mysql['password']);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+    ensureSupplementalSchema($pdo, 'mysql');
     return $pdo;
+}
+
+function ensureSupplementalSchema(PDO $pdo, string $driver): void
+{
+    if ($driver === 'sqlite') {
+        $pdo->exec(
+            'CREATE TABLE IF NOT EXISTS test_case_assignees (
+              test_case_id TEXT NOT NULL,
+              user_id TEXT NOT NULL,
+              created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+              PRIMARY KEY (test_case_id, user_id),
+              FOREIGN KEY (test_case_id) REFERENCES test_cases (id) ON DELETE CASCADE,
+              FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )'
+        );
+        return;
+    }
+
+    $pdo->exec(
+        'CREATE TABLE IF NOT EXISTS test_case_assignees (
+          test_case_id VARCHAR(40) NOT NULL,
+          user_id VARCHAR(40) NOT NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (test_case_id, user_id),
+          CONSTRAINT test_case_assignees_case_fk FOREIGN KEY (test_case_id) REFERENCES test_cases (id) ON DELETE CASCADE,
+          CONSTRAINT test_case_assignees_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
+    );
 }
 
 function respond(array $payload): void
@@ -101,6 +131,7 @@ function fetchCases(PDO $pdo): array
 {
     $cases = $pdo->query('SELECT id, title, description, owner_id FROM test_cases ORDER BY created_at, id')->fetchAll();
     $groupMap = fetchRelationMap($pdo, 'SELECT test_case_id AS item_id, group_id FROM test_case_groups');
+    $assigneeMap = fetchRelationMap($pdo, 'SELECT test_case_id AS item_id, user_id AS group_id FROM test_case_assignees');
     $stepsByCase = [];
     $steps = $pdo->query(
         'SELECT id, test_case_id, precondition, action, expected_result, actual_result, comment, result_status
@@ -125,6 +156,7 @@ function fetchCases(PDO $pdo): array
         'title' => $case['title'],
         'description' => $case['description'] ?? '',
         'ownerId' => $case['owner_id'],
+        'assignedUserIds' => $assigneeMap[$case['id']] ?? [],
         'groupIds' => $groupMap[$case['id']] ?? [],
         'steps' => $stepsByCase[$case['id']] ?? [],
     ], $cases);
@@ -173,7 +205,7 @@ function saveState(PDO $pdo, array $state): void
 
 function clearState(PDO $pdo): void
 {
-    foreach (['auth_sessions', 'suite_cases', 'suite_groups', 'test_case_groups', 'test_case_steps', 'suites', 'test_cases', 'user_groups', 'users', 'qa_groups'] as $table) {
+    foreach (['auth_sessions', 'suite_cases', 'suite_groups', 'test_case_assignees', 'test_case_groups', 'test_case_steps', 'suites', 'test_cases', 'user_groups', 'users', 'qa_groups'] as $table) {
         $pdo->exec("DELETE FROM {$table}");
     }
 }
@@ -203,6 +235,7 @@ function saveCases(PDO $pdo, array $cases): void
 {
     $stmt = $pdo->prepare('INSERT INTO test_cases (id, title, description, owner_id) VALUES (?, ?, ?, ?)');
     $groupLink = $pdo->prepare('INSERT INTO test_case_groups (test_case_id, group_id) VALUES (?, ?)');
+    $assigneeLink = $pdo->prepare('INSERT INTO test_case_assignees (test_case_id, user_id) VALUES (?, ?)');
     $stepStmt = $pdo->prepare(
         'INSERT INTO test_case_steps
          (id, test_case_id, sort_order, precondition, action, expected_result, actual_result, comment, result_status)
@@ -213,6 +246,9 @@ function saveCases(PDO $pdo, array $cases): void
         $stmt->execute([$case['id'], $case['title'], $case['description'] ?? null, $case['ownerId'] ?? null]);
         foreach ($case['groupIds'] ?? [] as $groupId) {
             $groupLink->execute([$case['id'], $groupId]);
+        }
+        foreach ($case['assignedUserIds'] ?? [] as $userId) {
+            $assigneeLink->execute([$case['id'], $userId]);
         }
         foreach ($case['steps'] ?? [] as $index => $step) {
             $stepStmt->execute([

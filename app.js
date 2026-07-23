@@ -3,8 +3,8 @@ const storeKey = "testflow-qa-state-v1";
 const seedState = {
   currentUserId: "u1",
   users: [
-    { id: "u1", name: "Администратор", email: "admin@test.local", password: "admin123", role: "QA Lead", groupIds: ["g1"] },
-    { id: "u2", name: "Анна QA", email: "anna@test.local", password: "test123", role: "Tester", groupIds: ["g2"] },
+    { id: "u1", name: "Администратор", email: "admin@test.local", password: "admin123", role: "Admin", groupIds: ["g1"] },
+    { id: "u2", name: "Анна QA", email: "anna@test.local", password: "test123", role: "QA", groupIds: ["g2"] },
   ],
   groups: [
     { id: "g1", name: "Regression", description: "Критичные проверки перед релизом" },
@@ -16,6 +16,7 @@ const seedState = {
       title: "Авторизация по email",
       description: "Проверка входа зарегистрированного пользователя.",
       ownerId: "u1",
+      assignedUserIds: ["u2"],
       groupIds: ["g1"],
       steps: [
         {
@@ -52,6 +53,7 @@ const seedState = {
       title: "Восстановление пароля",
       description: "Пользователь получает ссылку восстановления.",
       ownerId: "u2",
+      assignedUserIds: ["u2"],
       groupIds: ["g1", "g2"],
       steps: [
         {
@@ -112,8 +114,14 @@ async function loadState() {
   loadedState.groups = loadedState.groups || [];
   loadedState.cases = loadedState.cases || [];
   loadedState.suites = loadedState.suites || [];
+  loadedState.users.forEach((user) => {
+    user.role = normalizeRole(user.role);
+    user.groupIds = user.groupIds || [];
+  });
   loadedState.cases.forEach((testCase) => {
     testCase.steps = testCase.steps.map(normalizeStep);
+    testCase.groupIds = testCase.groupIds || [];
+    testCase.assignedUserIds = normalizeAssignedUsers(testCase);
   });
   return loadedState;
 }
@@ -157,6 +165,89 @@ function id(prefix) {
 
 function currentUser() {
   return state.users.find((user) => user.id === state.currentUserId);
+}
+
+function normalizeRole(role = "QA") {
+  const normalized = String(role).trim().toLowerCase();
+  if (normalized === "admin" || normalized === "qa lead") return "Admin";
+  if (normalized === "manager") return "Manager";
+  if (normalized === "qa" || normalized === "tester") return "QA";
+  return "QA";
+}
+
+function roleLabel(role) {
+  return normalizeRole(role);
+}
+
+function isAdmin(user = currentUser()) {
+  return normalizeRole(user?.role) === "Admin";
+}
+
+function isManager(user = currentUser()) {
+  return normalizeRole(user?.role) === "Manager";
+}
+
+function canManageCases(user = currentUser()) {
+  return isAdmin(user) || isManager(user);
+}
+
+function canCreateCases(user = currentUser()) {
+  return Boolean(user) && (isAdmin(user) || isManager(user) || normalizeRole(user.role) === "QA");
+}
+
+function canEditCase(testCase, user = currentUser()) {
+  if (!testCase || !user) return false;
+  if (canManageCases(user)) return true;
+  return hasSharedGroup(testCase.groupIds, user.groupIds) || normalizeAssignedUsers(testCase).includes(user.id);
+}
+
+function canDeleteCase(user = currentUser()) {
+  return isAdmin(user);
+}
+
+function canManageSuites(user = currentUser()) {
+  return isAdmin(user) || isManager(user);
+}
+
+function canManageGroups(user = currentUser()) {
+  return isAdmin(user);
+}
+
+function canManageUsers(user = currentUser()) {
+  return isAdmin(user);
+}
+
+function canAssignQa(user = currentUser()) {
+  return isAdmin(user) || isManager(user);
+}
+
+function canOpenView(target, user = currentUser()) {
+  if (!user) return false;
+  if (isAdmin(user)) return true;
+  if (isManager(user)) return true;
+  if (normalizeRole(user.role) === "QA") return ["dashboard", "cases", "create-case", "edit-case"].includes(target);
+  return false;
+}
+
+function canUseCase(testCase, user = currentUser()) {
+  if (!testCase || !user) return false;
+  if (canManageCases(user)) return true;
+  return hasSharedGroup(testCase.groupIds, user.groupIds) || normalizeAssignedUsers(testCase).includes(user.id);
+}
+
+function canEditUserGroups(targetUser, user = currentUser()) {
+  if (isAdmin(user)) return true;
+  return isManager(user) && normalizeRole(targetUser.role) === "QA";
+}
+
+function normalizeAssignedUsers(testCase) {
+  const assigned = testCase.assignedUserIds || [];
+  const fallbackOwner = normalizeRole(state.users.find((user) => user.id === testCase.ownerId)?.role) === "QA" ? [testCase.ownerId] : [];
+  return Array.from(new Set([...assigned, ...fallbackOwner].filter(Boolean)));
+}
+
+function hasSharedGroup(groupIds = [], userGroupIds = []) {
+  return groupIds.some((groupId) => userGroupIds.includes(groupId));
 }
 
 function escapeHtml(value = "") {
@@ -225,14 +316,14 @@ function render() {
         <nav class="nav">
           ${navButton("dashboard", "▦", "Дашборд")}
           ${navButton("cases", "✓", "Кейсы")}
-          ${navButton("suites", "▣", "Сьюты")}
-          ${navButton("groups", "◌", "Группы")}
-          ${navButton("users", "◎", "Пользователи")}
+          ${canManageSuites() ? navButton("suites", "▣", "Сьюты") : ""}
+          ${isAdmin() || isManager() ? navButton("groups", "◌", "Группы") : ""}
+          ${isAdmin() || isManager() ? navButton("users", "◎", "Пользователи") : ""}
         </nav>
         <div class="sidebar-user">
           <div>
             <strong>${escapeHtml(currentUser().name)}</strong>
-            <div class="muted">${escapeHtml(currentUser().role)}</div>
+            <div class="muted">${escapeHtml(roleLabel(currentUser().role))}</div>
           </div>
           <button class="secondary" data-action="logout">Выйти</button>
         </div>
@@ -264,6 +355,10 @@ function topbar(kicker, title, text, action = "") {
 }
 
 function renderView() {
+  if (!canOpenView(view)) {
+    view = "cases";
+  }
+
   const views = {
     dashboard: renderDashboard,
     cases: renderCases,
@@ -279,14 +374,16 @@ function renderView() {
 }
 
 function renderDashboard() {
-  const stats = aggregate();
-  const recentCases = state.cases.slice(0, 4).map(renderCaseCard).join("");
+  const cases = visibleCases();
+  const suites = visibleSuites();
+  const stats = aggregate(cases);
+  const recentCases = cases.slice(0, 4).map(renderCaseCard).join("");
 
   return `
-    ${topbar("Обзор", "Контроль прохождения тестов", "Общий процент успешных и упавших шагов считается по всем кейсам.")}
+    ${topbar("Обзор", "Контроль прохождения тестов", "Общий процент успешных и упавших шагов считается по доступным кейсам.")}
     <section class="grid stats">
-      ${stat("Кейсов", state.cases.length)}
-      ${stat("Сьютов", state.suites.length)}
+      ${stat("Кейсов", cases.length)}
+      ${stat("Сьютов", suites.length)}
       ${stat("Успешно", `${stats.passPercent}%`)}
       ${stat("Не успешно", `${stats.failPercent}%`)}
     </section>
@@ -297,8 +394,8 @@ function renderDashboard() {
         <p class="muted">${stats.failed} шагов упало, ${Math.max(stats.total - stats.passed - stats.failed, 0)} еще без результата.</p>
       </div>
       <div class="panel">
-        <div class="panel-title"><h2>Группы</h2><button class="secondary" data-view="groups">Открыть</button></div>
-        <div class="badge-row">${state.groups.map((group) => `<span class="badge">${escapeHtml(group.name)}</span>`).join("")}</div>
+        <div class="panel-title"><h2>Группы</h2>${isAdmin() || isManager() ? `<button class="secondary" data-view="groups">Открыть</button>` : ""}</div>
+        <div class="badge-row">${visibleGroups().map((group) => `<span class="badge">${escapeHtml(group.name)}</span>`).join("") || `<span class="muted">Группы не назначены</span>`}</div>
       </div>
     </section>
     <section class="panel" style="margin-top:16px">
@@ -313,13 +410,13 @@ function stat(label, value) {
 }
 
 function renderCases() {
-  const filtered = filterCasesBySuite(state.cases);
+  const filtered = filterCasesBySuite(visibleCases());
   return `
     ${topbar(
       "Тест-кейсы",
       "Кейсы",
       "Список кейсов, их сьюты, группы, ответственные и текущий прогресс по строкам проверки.",
-      `<button class="primary" data-view="create-case">Создать кейс</button>`,
+      canCreateCases() ? `<button class="primary" data-view="create-case">Создать кейс</button>` : "",
     )}
     ${renderCaseSuiteFilters()}
     <section>
@@ -329,6 +426,9 @@ function renderCases() {
 }
 
 function renderCreateCase() {
+  if (!canCreateCases()) return forbidden();
+  const availableSuites = suitesForCurrentUser();
+
   return `
     ${topbar(
       "Новый кейс",
@@ -340,8 +440,10 @@ function renderCreateCase() {
       <form class="form-stack" data-form="case">
         <label>Название<input name="title" required placeholder="Например, оформление заказа" /></label>
         <label>Описание<textarea name="description" placeholder="Что проверяем"></textarea></label>
-        <label>Ответственный<select name="ownerId">${state.users.map((user) => `<option value="${user.id}">${escapeHtml(user.name)}</option>`).join("")}</select></label>
-        <label>Сьюты<select name="suiteIds" multiple size="4">${renderSuiteOptions()}</select></label>
+        <label>Ответственный<select name="ownerId">${renderOwnerOptions()}</select></label>
+        ${canAssignQa() ? `<label>Назначенные QA<select name="assignedUserIds" multiple size="4">${renderQaOptions()}</select></label>` : ""}
+        <label>Сьюты<select name="suiteIds" multiple size="4" ${availableSuites.length ? "" : "disabled"}>${renderSuiteOptions([], availableSuites)}</select></label>
+        ${availableSuites.length ? "" : `<p class="muted">Для создания кейса нужно быть назначенным хотя бы в одну группу со сьютом.</p>`}
         <div class="step-list step-table" data-steps>
           ${renderStepInputRow("add")}
         </div>
@@ -356,6 +458,7 @@ function renderCreateCase() {
 
 function renderCaseCard(testCase) {
   const progress = progressForCase(testCase);
+  const editable = canEditCase(testCase);
   return `
     <article class="item-card">
       <div class="item-head">
@@ -364,13 +467,14 @@ function renderCaseCard(testCase) {
           <p class="muted">${escapeHtml(testCase.description)}</p>
         </div>
         <div class="item-actions">
-          <button class="secondary" data-edit-case="${testCase.id}">Редактировать</button>
+          ${editable ? `<button class="secondary" data-edit-case="${testCase.id}">Редактировать</button>` : ""}
         </div>
       </div>
       <div class="badge-row">
         ${suiteBadges(testCase.id)}
         ${groupBadges(testCase.groupIds)}
         <span class="badge">${ownerName(testCase.ownerId)}</span>
+        ${assignedQaBadges(testCase.assignedUserIds)}
         <span class="badge success">${progress.passPercent}% успешно</span>
         <span class="badge danger">${progress.failPercent}% не успешно</span>
       </div>
@@ -399,19 +503,24 @@ function renderEditCase() {
     view = "cases";
     return renderCases();
   }
+  if (!canEditCase(testCase)) return forbidden();
+
+  const availableSuites = suitesForCurrentUser(testCase);
+  const selectedSuiteIds = suiteIdsForCase(testCase.id);
 
   return `
     ${topbar(
       "Редактирование",
       escapeHtml(testCase.title),
       "Здесь можно редактировать, удалять и добавлять строки проверки, а также менять сьюты кейса.",
-      `<button class="secondary" data-view="cases">Назад к кейсам</button><button class="danger" data-delete-case="${testCase.id}">Удалить кейс</button>`,
+      `<button class="secondary" data-view="cases">Назад к кейсам</button>${canDeleteCase() ? `<button class="danger" data-delete-case="${testCase.id}">Удалить кейс</button>` : ""}`,
     )}
     <section class="panel form-page">
       <form class="form-stack" data-form="edit-case">
         <label>Название<input name="title" required value="${escapeHtml(testCase.title)}" /></label>
         <label>Описание<textarea name="description" placeholder="Что проверяем">${escapeHtml(testCase.description)}</textarea></label>
-        <label>Сьюты<select name="suiteIds" multiple size="4">${renderSuiteOptions(suiteIdsForCase(testCase.id))}</select></label>
+        ${canAssignQa() ? `<label>Назначенные QA<select name="assignedUserIds" multiple size="4">${renderQaOptions(testCase.assignedUserIds)}</select></label>` : ""}
+        <label>Сьюты<select name="suiteIds" multiple size="4">${renderSuiteOptions(selectedSuiteIds, availableSuites)}</select></label>
         <div>
           <h2>Текущие шаги</h2>
           <div class="step-table-wrap" style="margin-top:12px">
@@ -448,7 +557,7 @@ function renderStepInputRow(action = "add") {
   const buttonAction = isRemove ? "remove-new-step" : "add-step";
   const buttonLabel = isRemove ? "-" : "+";
   return `
-    <div class="case-step-grid step-input-row">
+    <div class="case-step-grid step-input-row" data-new-step-row>
       <label>Предусловие<textarea name="stepPrecondition" placeholder="Что должно быть готово"></textarea></label>
       <label>Шаги<textarea name="stepAction" placeholder="Действие или проверка"></textarea></label>
       <label>ОР<textarea name="stepExpected" placeholder="Ожидаемый результат"></textarea></label>
@@ -489,7 +598,7 @@ function renderStatusOnlyStepRow(caseId, step) {
 }
 
 function collectStepRows(form) {
-  return Array.from(form.querySelectorAll(".step-input-row"))
+  return Array.from(form.querySelectorAll("[data-new-step-row]"))
     .map((row) =>
       normalizeStep({
         id: id("s"),
@@ -509,7 +618,8 @@ function findStep(caseId, stepId) {
 }
 
 function renderSuites() {
-  const filtered = filterByGroup(state.suites);
+  if (!canManageSuites()) return forbidden();
+  const filtered = filterByGroup(visibleSuites());
   return `
     ${topbar(
       "Сьюты",
@@ -525,6 +635,8 @@ function renderSuites() {
 }
 
 function renderCreateSuite() {
+  if (!canManageSuites()) return forbidden();
+
   return `
     ${topbar(
       "Новый сьют",
@@ -559,7 +671,7 @@ function renderSuiteCard(suite) {
         </div>
         <div class="item-actions">
           <button class="secondary" data-edit-suite="${suite.id}">Редактировать</button>
-          <button class="danger" data-delete-suite="${suite.id}">Удалить</button>
+          ${isAdmin() ? `<button class="danger" data-delete-suite="${suite.id}">Удалить</button>` : ""}
         </div>
       </div>
       <div class="badge-row">${groupBadges(suite.groupIds)}<span class="badge">${cases.length} кейсов</span><span class="badge success">${stats.passPercent}% успешно</span><span class="badge danger">${stats.failPercent}% не успешно</span></div>
@@ -570,6 +682,8 @@ function renderSuiteCard(suite) {
 }
 
 function renderEditSuite() {
+  if (!canManageSuites()) return forbidden();
+
   const suite = state.suites.find((item) => item.id === editingSuiteId);
   if (!suite) {
     view = "suites";
@@ -620,17 +734,22 @@ function renderEditSuite() {
 }
 
 function renderGroups() {
-  return `
-    ${topbar("Группы", "Группы пользователей, кейсов и сьютов", "Используйте группы как продуктовые зоны, команды или типы регрессии.")}
-    <section class="grid two-col">
-      <form class="panel form-stack" data-form="group">
+  if (!isAdmin() && !isManager()) return forbidden();
+  const form = isAdmin()
+    ? `<form class="panel form-stack" data-form="group">
         <h2>Новая группа</h2>
         <label>Название<input name="name" required placeholder="Например, Billing" /></label>
         <label>Описание<textarea name="description" placeholder="Контекст группы"></textarea></label>
         <button class="primary">Создать группу</button>
-      </form>
+      </form>`
+    : `<div class="panel"><h2>Группы</h2><p class="muted">Manager видит группы для назначения QA, создание и удаление доступны Admin.</p></div>`;
+
+  return `
+    ${topbar("Группы", "Группы пользователей, кейсов и сьютов", "Используйте группы как продуктовые зоны, команды или типы регрессии.")}
+    <section class="grid two-col">
+      ${form}
       <div class="grid three-col">
-        ${state.groups.map(renderGroupCard).join("") || empty("Групп пока нет")}
+        ${visibleGroups().map(renderGroupCard).join("") || empty("Групп пока нет")}
       </div>
     </section>
   `;
@@ -647,7 +766,7 @@ function renderGroupCard(group) {
           <h3>${escapeHtml(group.name)}</h3>
           <p class="muted">${escapeHtml(group.description)}</p>
         </div>
-        <button class="danger" data-delete-group="${group.id}">Удалить</button>
+        ${isAdmin() ? `<button class="danger" data-delete-group="${group.id}">Удалить</button>` : ""}
       </div>
       <div class="badge-row">
         <span class="badge">${caseCount} кейсов</span>
@@ -659,34 +778,48 @@ function renderGroupCard(group) {
 }
 
 function renderUsers() {
-  return `
-    ${topbar("Пользователи", "Команды и доступ", "Добавляйте пользователей и включайте их в группы тестирования.")}
-    <section class="grid two-col">
-      <form class="panel form-stack" data-form="user">
+  if (!isAdmin() && !isManager()) return forbidden();
+  const createForm = isAdmin()
+    ? `<form class="panel form-stack" data-form="user">
         <h2>Новый пользователь</h2>
         <label>Имя<input name="name" required placeholder="Имя пользователя" /></label>
         <label>Email<input name="email" type="email" required placeholder="name@company.com" /></label>
-        <label>Роль<input name="role" required placeholder="QA, Developer, Manager" /></label>
+        <label>Роль<select name="role" required>${renderRoleOptions()}</select></label>
         <label>Пароль<input name="password" type="password" required placeholder="Минимум 4 символа" /></label>
         <label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions()}</select></label>
         <button class="primary">Создать пользователя</button>
-      </form>
+      </form>`
+    : `<div class="panel"><h2>Назначение QA</h2><p class="muted">Manager может назначать тестеров в группы. Создание, удаление и смена ролей доступны Admin.</p></div>`;
+
+  return `
+    ${topbar("Пользователи", "Команды и доступ", "Добавляйте пользователей и включайте их в группы тестирования.")}
+    <section class="grid two-col">
+      ${createForm}
       <div class="user-list">${state.users.map(renderUserCard).join("")}</div>
     </section>
   `;
 }
 
 function renderUserCard(user) {
+  const editableGroups = canEditUserGroups(user);
+  const editableUser = canManageUsers();
   return `
     <article class="item-card">
-      <div class="item-head">
-        <div>
-          <h3>${escapeHtml(user.name)}</h3>
-          <p class="muted">${escapeHtml(user.email)} · ${escapeHtml(user.role)}</p>
+      <form class="form-stack" data-form="user-update" data-user-id="${user.id}">
+        <div class="item-head">
+          <div>
+            <h3>${escapeHtml(user.name)}</h3>
+            <p class="muted">${escapeHtml(user.email)} · ${escapeHtml(roleLabel(user.role))}</p>
+          </div>
+          ${editableUser ? `<button class="danger" type="button" data-delete-user="${user.id}" ${user.id === state.currentUserId ? "disabled" : ""}>Удалить</button>` : ""}
         </div>
-        <button class="danger" data-delete-user="${user.id}" ${user.id === state.currentUserId ? "disabled" : ""}>Удалить</button>
-      </div>
-      <div class="badge-row">${groupBadges(user.groupIds)}</div>
+        ${editableUser ? `<label>Имя<input name="name" required value="${escapeHtml(user.name)}" /></label>` : ""}
+        ${editableUser ? `<label>Email<input name="email" type="email" required value="${escapeHtml(user.email)}" /></label>` : ""}
+        ${editableUser ? `<label>Роль<select name="role">${renderRoleOptions(user.role)}</select></label>` : ""}
+        ${editableUser ? `<label>Пароль<input name="password" type="password" required value="${escapeHtml(user.password)}" /></label>` : ""}
+        ${editableGroups ? `<label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions(user.groupIds)}</select></label>` : `<div class="badge-row">${groupBadges(user.groupIds)}</div>`}
+        ${editableUser || editableGroups ? `<button class="secondary">Сохранить пользователя</button>` : ""}
+      </form>
     </article>
   `;
 }
@@ -736,14 +869,32 @@ function statusLabel(status) {
   return labels[status] || labels.untested;
 }
 
+function renderRoleOptions(selected = "QA") {
+  const roles = ["Admin", "Manager", "QA"];
+  const current = normalizeRole(selected);
+  return roles.map((role) => `<option value="${role}" ${role === current ? "selected" : ""}>${role}</option>`).join("");
+}
+
+function renderOwnerOptions(selected = currentUser().id) {
+  const users = canManageCases() ? state.users : [currentUser()];
+  return users.map((user) => `<option value="${user.id}" ${user.id === selected ? "selected" : ""}>${escapeHtml(user.name)}</option>`).join("");
+}
+
 function renderGroupOptions(selected = []) {
   return state.groups
     .map((group) => `<option value="${group.id}" ${selected.includes(group.id) ? "selected" : ""}>${escapeHtml(group.name)}</option>`)
     .join("");
 }
 
-function renderSuiteOptions(selected = []) {
-  return state.suites
+function renderQaOptions(selected = []) {
+  return state.users
+    .filter((user) => normalizeRole(user.role) === "QA")
+    .map((user) => `<option value="${user.id}" ${selected.includes(user.id) ? "selected" : ""}>${escapeHtml(user.name)}</option>`)
+    .join("");
+}
+
+function renderSuiteOptions(selected = [], suites = state.suites) {
+  return suites
     .map((suite) => `<option value="${suite.id}" ${selected.includes(suite.id) ? "selected" : ""}>${escapeHtml(suite.title)}</option>`)
     .join("");
 }
@@ -758,10 +909,11 @@ function renderGroupFilters() {
 }
 
 function renderCaseSuiteFilters() {
+  const suites = suitesForCurrentUser();
   return `
     <div class="filters">
       <button class="filter-chip ${selectedCaseSuiteId === "all" ? "active" : ""}" data-filter-suite="all">Все сьюты</button>
-      ${state.suites.map((suite) => `<button class="filter-chip ${selectedCaseSuiteId === suite.id ? "active" : ""}" data-filter-suite="${suite.id}">${escapeHtml(suite.title)}</button>`).join("")}
+      ${suites.map((suite) => `<button class="filter-chip ${selectedCaseSuiteId === suite.id ? "active" : ""}" data-filter-suite="${suite.id}">${escapeHtml(suite.title)}</button>`).join("")}
     </div>
   `;
 }
@@ -776,6 +928,27 @@ function filterCasesBySuite(items) {
   const suite = state.suites.find((item) => item.id === selectedCaseSuiteId);
   if (!suite) return items;
   return items.filter((item) => suite.caseIds.includes(item.id));
+}
+
+function visibleCases() {
+  return state.cases.filter((testCase) => canUseCase(testCase));
+}
+
+function visibleSuites() {
+  if (canManageSuites()) return state.suites;
+  const caseIds = new Set(visibleCases().map((testCase) => testCase.id));
+  return state.suites.filter((suite) => suite.caseIds.some((caseId) => caseIds.has(caseId)) || hasSharedGroup(suite.groupIds, currentUser().groupIds));
+}
+
+function suitesForCurrentUser(testCase = null) {
+  if (canManageSuites()) return state.suites;
+  const selectedIds = testCase ? suiteIdsForCase(testCase.id) : [];
+  return state.suites.filter((suite) => selectedIds.includes(suite.id) || hasSharedGroup(suite.groupIds, currentUser().groupIds));
+}
+
+function visibleGroups() {
+  if (isAdmin() || isManager()) return state.groups;
+  return state.groups.filter((group) => currentUser().groupIds.includes(group.id));
 }
 
 function groupBadges(groupIds) {
@@ -797,6 +970,15 @@ function suiteBadges(caseId) {
     .map((suite) => `<span class="badge">${escapeHtml(suite.title)}</span>`)
     .join("");
   return badges || `<span class="badge">Без сьюта</span>`;
+}
+
+function assignedQaBadges(userIds = []) {
+  const badges = userIds
+    .map((userId) => state.users.find((user) => user.id === userId))
+    .filter(Boolean)
+    .map((user) => `<span class="badge">${escapeHtml(user.name)}</span>`)
+    .join("");
+  return badges || `<span class="badge">QA не назначены</span>`;
 }
 
 function groupIdsFromSuites(suiteIds) {
@@ -828,7 +1010,15 @@ function empty(text) {
   return `<div class="empty">${text}</div>`;
 }
 
+function forbidden() {
+  return `
+    ${topbar("Доступ", "Недостаточно прав", "Эта страница или действие недоступны для вашей роли.", `<button class="secondary" data-view="cases">К кейсам</button>`)}
+    <div class="empty">Выберите доступный раздел в меню.</div>
+  `;
+}
+
 function selectedValues(select) {
+  if (!select) return [];
   return Array.from(select.selectedOptions).map((option) => option.value);
 }
 
@@ -837,17 +1027,21 @@ app.addEventListener("click", (event) => {
   if (!button) return;
 
   if (button.dataset.view) {
+    if (!canOpenView(button.dataset.view)) return;
     view = button.dataset.view;
     render();
   }
 
   if (button.dataset.editCase) {
+    const testCase = state.cases.find((item) => item.id === button.dataset.editCase);
+    if (!canEditCase(testCase)) return;
     editingCaseId = button.dataset.editCase;
     view = "edit-case";
     render();
   }
 
   if (button.dataset.editSuite) {
+    if (!canManageSuites()) return;
     editingSuiteId = button.dataset.editSuite;
     const suite = state.suites.find((item) => item.id === editingSuiteId);
     editingSuiteGroupIds = suite ? [...suite.groupIds] : [];
@@ -886,6 +1080,7 @@ app.addEventListener("click", (event) => {
   }
 
   if (button.dataset.deleteCase) {
+    if (!canDeleteCase()) return;
     state.cases = state.cases.filter((item) => item.id !== button.dataset.deleteCase);
     state.suites.forEach((suite) => {
       suite.caseIds = suite.caseIds.filter((caseId) => caseId !== button.dataset.deleteCase);
@@ -895,6 +1090,7 @@ app.addEventListener("click", (event) => {
   }
 
   if (button.dataset.deleteSuite) {
+    if (!isAdmin()) return;
     state.suites = state.suites.filter((item) => item.id !== button.dataset.deleteSuite);
     if (selectedCaseSuiteId === button.dataset.deleteSuite) selectedCaseSuiteId = "all";
     saveState();
@@ -902,6 +1098,7 @@ app.addEventListener("click", (event) => {
   }
 
   if (button.dataset.deleteGroup) {
+    if (!isAdmin()) return;
     const groupId = button.dataset.deleteGroup;
     state.groups = state.groups.filter((group) => group.id !== groupId);
     [...state.users, ...state.cases, ...state.suites].forEach((item) => {
@@ -914,6 +1111,7 @@ app.addEventListener("click", (event) => {
   }
 
   if (button.dataset.deleteUser) {
+    if (!canManageUsers()) return;
     state.users = state.users.filter((user) => user.id !== button.dataset.deleteUser);
     saveState();
     render();
@@ -922,6 +1120,7 @@ app.addEventListener("click", (event) => {
   if (button.dataset.deleteStep) {
     const [caseId, stepId] = button.dataset.deleteStep.split(":");
     const testCase = state.cases.find((item) => item.id === caseId);
+    if (!canEditCase(testCase)) return;
     testCase.steps = testCase.steps.filter((step) => step.id !== stepId);
     saveState();
     render();
@@ -957,12 +1156,18 @@ app.addEventListener("submit", (event) => {
   }
 
   if (form.dataset.form === "case") {
+    if (!canCreateCases()) return;
     const suiteIds = selectedValues(form.elements.suiteIds);
+    if (!canManageCases() && !suiteIds.length) {
+      alert("Выберите сьют из своей группы");
+      return;
+    }
     const newCase = {
       id: id("c"),
       title: formData.get("title").trim(),
       description: formData.get("description").trim(),
-      ownerId: formData.get("ownerId"),
+      ownerId: canManageCases() ? formData.get("ownerId") : currentUser().id,
+      assignedUserIds: canAssignQa() ? selectedValues(form.elements.assignedUserIds) : [currentUser().id],
       groupIds: groupIdsFromSuites(suiteIds),
       steps: collectStepRows(form),
     };
@@ -975,6 +1180,7 @@ app.addEventListener("submit", (event) => {
   }
 
   if (form.dataset.form === "suite") {
+    if (!canManageSuites()) return;
     state.suites.unshift({
       id: id("q"),
       title: formData.get("title").trim(),
@@ -990,10 +1196,14 @@ app.addEventListener("submit", (event) => {
   if (form.dataset.form === "edit-case") {
     const testCase = state.cases.find((item) => item.id === editingCaseId);
     if (!testCase) return;
+    if (!canEditCase(testCase)) return;
 
     const suiteIds = selectedValues(form.elements.suiteIds);
     testCase.title = formData.get("title").trim();
     testCase.description = formData.get("description").trim();
+    if (canAssignQa()) {
+      testCase.assignedUserIds = selectedValues(form.elements.assignedUserIds);
+    }
     testCase.groupIds = groupIdsFromSuites(suiteIds);
     testCase.steps.push(...collectStepRows(form));
     syncCaseSuites(testCase.id, suiteIds);
@@ -1003,6 +1213,7 @@ app.addEventListener("submit", (event) => {
   }
 
   if (form.dataset.form === "edit-suite") {
+    if (!canManageSuites()) return;
     const suite = state.suites.find((item) => item.id === editingSuiteId);
     if (!suite) return;
 
@@ -1015,6 +1226,7 @@ app.addEventListener("submit", (event) => {
   }
 
   if (form.dataset.form === "group") {
+    if (!isAdmin()) return;
     state.groups.unshift({
       id: id("g"),
       name: formData.get("name").trim(),
@@ -1025,14 +1237,40 @@ app.addEventListener("submit", (event) => {
   }
 
   if (form.dataset.form === "user") {
+    if (!canManageUsers()) return;
     state.users.unshift({
       id: id("u"),
       name: formData.get("name").trim(),
       email: formData.get("email").trim(),
-      role: formData.get("role").trim(),
+      role: normalizeRole(formData.get("role")),
       password: formData.get("password"),
       groupIds: selectedValues(form.elements.groupIds),
     });
+    saveState();
+    render();
+  }
+
+  if (form.dataset.form === "user-update") {
+    const user = state.users.find((item) => item.id === form.dataset.userId);
+    if (!user || (!canManageUsers() && !canEditUserGroups(user))) return;
+
+    if (canManageUsers()) {
+      const email = formData.get("email").trim().toLowerCase();
+      const duplicate = state.users.some((item) => item.id !== user.id && item.email.toLowerCase() === email);
+      if (duplicate) {
+        alert("Пользователь с таким email уже есть");
+        return;
+      }
+      user.name = formData.get("name").trim();
+      user.email = email;
+      user.role = normalizeRole(formData.get("role"));
+      user.password = formData.get("password");
+    }
+
+    if (canEditUserGroups(user)) {
+      user.groupIds = selectedValues(form.elements.groupIds);
+    }
+
     saveState();
     render();
   }
@@ -1040,6 +1278,7 @@ app.addEventListener("submit", (event) => {
 
 app.addEventListener("change", (event) => {
   if (event.target.dataset.editSuiteGroups !== undefined) {
+    if (!canManageSuites()) return;
     editingSuiteGroupIds = selectedValues(event.target);
     render();
     return;
@@ -1047,6 +1286,8 @@ app.addEventListener("change", (event) => {
 
   if (event.target.dataset.stepStatus) {
     const [caseId, stepId] = event.target.dataset.stepStatus.split(":");
+    const testCase = state.cases.find((item) => item.id === caseId);
+    if (!canUseCase(testCase)) return;
     const step = findStep(caseId, stepId);
     if (!step) return;
     step.status = event.target.value;
@@ -1058,6 +1299,8 @@ app.addEventListener("change", (event) => {
 app.addEventListener("input", (event) => {
   if (event.target.dataset.stepField) {
     const [caseId, stepId, field] = event.target.dataset.stepField.split(":");
+    const testCase = state.cases.find((item) => item.id === caseId);
+    if (!canEditCase(testCase)) return;
     const step = findStep(caseId, stepId);
     if (!step) return;
     step[field] = event.target.value;

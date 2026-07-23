@@ -65,6 +65,15 @@ CREATE TABLE test_case_groups (
   FOREIGN KEY (group_id) REFERENCES qa_groups (id) ON DELETE CASCADE
 );
 
+CREATE TABLE test_case_assignees (
+  test_case_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (test_case_id, user_id),
+  FOREIGN KEY (test_case_id) REFERENCES test_cases (id) ON DELETE CASCADE,
+  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
 CREATE TABLE suites (
   id TEXT PRIMARY KEY,
   title TEXT NOT NULL,
