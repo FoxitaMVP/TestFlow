@@ -7,6 +7,7 @@ CREATE TABLE users (
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'Tester',
   status TEXT NOT NULL DEFAULT 'approved',
+  requested_at INTEGER,
   active_session_token TEXT,
   last_activity_at INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

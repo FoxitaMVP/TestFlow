@@ -102,6 +102,7 @@ let apiAvailable = false;
 
 let view = "dashboard";
 let authMode = "login";
+let authNotice = "";
 let selectedGroupId = "all";
 let selectedCaseSuiteId = "all";
 let editingSuiteGroupIds = [];
@@ -273,6 +274,10 @@ function normalizeUserStatus(status = "approved") {
   return "approved";
 }
 
+function isPendingUser(user) {
+  return normalizeUserStatus(user.status) === "pending";
+}
+
 function userStatusLabel(status) {
   const labels = {
     approved: "Одобрен",
@@ -337,7 +342,7 @@ function canOpenView(target, user = currentUser()) {
 }
 
 function pendingUsers() {
-  return state.users.filter((user) => normalizeUserStatus(user.status) === "pending");
+  return state.users.filter(isPendingUser);
 }
 
 function canUseCase(testCase, user = currentUser()) {
@@ -948,13 +953,14 @@ function renderRegistrationRequests() {
 }
 
 function renderRegistrationRequestCard(user) {
+  const requestedAt = user.requestedAt ? new Date(Number(user.requestedAt)).toLocaleString("ru-RU") : "Дата не указана";
   return `
     <article class="item-card">
       <form class="form-stack" data-form="registration-request" data-user-id="${user.id}">
         <div class="item-head">
           <div>
             <h3>${escapeHtml(user.name)}</h3>
-            <p class="muted">${escapeHtml(user.email)} · ${escapeHtml(userStatusLabel(user.status))}</p>
+            <p class="muted">${escapeHtml(user.email)} · ${escapeHtml(userStatusLabel(user.status))} · ${escapeHtml(requestedAt)}</p>
           </div>
           <span class="badge warn">Новая заявка</span>
         </div>
@@ -1013,6 +1019,7 @@ function renderAuth() {
           ${authMode === "register" ? `<label>Имя<input name="name" required placeholder="Ваше имя" /></label>` : ""}
           <label>Email<input name="email" type="email" required value="${authMode === "login" ? "admin@test.local" : ""}" /></label>
           <label>Пароль<input name="password" type="password" required value="${authMode === "login" ? "admin123" : ""}" /></label>
+          ${authNotice ? `<p class="notice">${escapeHtml(authNotice)}</p>` : ""}
           <button class="primary">${authMode === "login" ? "Войти" : "Создать аккаунт"}</button>
           <p class="muted">Демо-вход: admin@test.local / admin123</p>
         </form>
@@ -1232,6 +1239,7 @@ app.addEventListener("click", (event) => {
 
   if (button.dataset.authMode) {
     authMode = button.dataset.authMode;
+    authNotice = "";
     renderAuth();
   }
 
@@ -1340,14 +1348,17 @@ app.addEventListener("submit", (event) => {
         alert("Пользователь не найден или пароль неверный");
         return;
       }
-      if (normalizeUserStatus(user.status) === "pending") {
-        alert("Ваша регистрация ожидает одобрения администратора");
+      if (isPendingUser(user)) {
+        authNotice = "Учётная запись ещё не активна. Дождитесь одобрения администратора.";
+        renderAuth();
         return;
       }
       if (normalizeUserStatus(user.status) === "rejected") {
-        alert("Ваша заявка на регистрацию отклонена");
+        authNotice = "Заявка на регистрацию отклонена. Обратитесь к администратору.";
+        renderAuth();
         return;
       }
+      authNotice = "";
       state.currentUserId = user.id;
       rememberSession(user);
     } else {
@@ -1355,10 +1366,23 @@ app.addEventListener("submit", (event) => {
         alert("Пользователь с таким email уже есть");
         return;
       }
-      const user = { id: id("u"), name: formData.get("name").trim(), email, password, role: "QA", status: "pending", groupIds: [] };
+      state.currentUserId = null;
+      clearSession();
+      const user = {
+        id: id("u"),
+        name: formData.get("name").trim(),
+        email,
+        password,
+        role: "QA",
+        status: "pending",
+        requestedAt: Date.now(),
+        activeSessionToken: null,
+        lastActivityAt: null,
+        groupIds: [],
+      };
       state.users.push(user);
       authMode = "login";
-      alert("Заявка отправлена. Вход станет доступен после одобрения администратора.");
+      authNotice = "Заявка отправлена. Вход станет доступен после одобрения администратора.";
     }
     saveState();
     render();
