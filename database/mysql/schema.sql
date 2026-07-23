@@ -4,6 +4,7 @@ CREATE TABLE users (
   email VARCHAR(190) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
   role VARCHAR(80) NOT NULL DEFAULT 'Tester',
+  status VARCHAR(24) NOT NULL DEFAULT 'approved',
   active_session_token VARCHAR(80) NULL,
   last_activity_at BIGINT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

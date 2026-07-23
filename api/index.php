@@ -60,6 +60,7 @@ function connectDatabase(array $config): PDO
 function ensureSupplementalSchema(PDO $pdo, string $driver): void
 {
     if ($driver === 'sqlite') {
+        addColumnIfMissing($pdo, 'sqlite', 'users', 'status', "TEXT NOT NULL DEFAULT 'approved'");
         addColumnIfMissing($pdo, 'sqlite', 'users', 'active_session_token', 'TEXT');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'last_activity_at', 'INTEGER');
         $pdo->exec(
@@ -75,6 +76,7 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
         return;
     }
 
+    addColumnIfMissing($pdo, 'mysql', 'users', 'status', "VARCHAR(24) NOT NULL DEFAULT 'approved'");
     addColumnIfMissing($pdo, 'mysql', 'users', 'active_session_token', 'VARCHAR(80) NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'last_activity_at', 'BIGINT NULL');
     $pdo->exec(
@@ -134,7 +136,7 @@ function loadState(PDO $pdo): array
 
 function fetchUsers(PDO $pdo): array
 {
-    $users = $pdo->query('SELECT id, name, email, password_hash, role, active_session_token, last_activity_at FROM users ORDER BY created_at, id')->fetchAll();
+    $users = $pdo->query('SELECT id, name, email, password_hash, role, status, active_session_token, last_activity_at FROM users ORDER BY created_at, id')->fetchAll();
     $groupMap = fetchRelationMap($pdo, 'SELECT user_id AS item_id, group_id FROM user_groups');
 
     return array_map(fn ($user) => [
@@ -143,6 +145,7 @@ function fetchUsers(PDO $pdo): array
         'email' => $user['email'],
         'password' => $user['password_hash'],
         'role' => $user['role'],
+        'status' => $user['status'] ?? 'approved',
         'activeSessionToken' => $user['active_session_token'],
         'lastActivityAt' => $user['last_activity_at'] ? (int) $user['last_activity_at'] : null,
         'groupIds' => $groupMap[$user['id']] ?? [],
@@ -247,7 +250,7 @@ function saveGroups(PDO $pdo, array $groups): void
 
 function saveUsers(PDO $pdo, array $users): void
 {
-    $stmt = $pdo->prepare('INSERT INTO users (id, name, email, password_hash, role, active_session_token, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
+    $stmt = $pdo->prepare('INSERT INTO users (id, name, email, password_hash, role, status, active_session_token, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     $link = $pdo->prepare('INSERT INTO user_groups (user_id, group_id) VALUES (?, ?)');
 
     foreach ($users as $user) {
@@ -257,6 +260,7 @@ function saveUsers(PDO $pdo, array $users): void
             $user['email'],
             $user['password'] ?? '',
             $user['role'] ?? 'Tester',
+            $user['status'] ?? 'approved',
             $user['activeSessionToken'] ?? null,
             $user['lastActivityAt'] ?? null,
         ]);

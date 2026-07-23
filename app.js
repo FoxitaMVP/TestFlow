@@ -7,8 +7,8 @@ const sessionTouchIntervalMs = 60 * 1000;
 const seedState = {
   currentUserId: null,
   users: [
-    { id: "u1", name: "Администратор", email: "admin@test.local", password: "admin123", role: "Admin", groupIds: ["g1"] },
-    { id: "u2", name: "Анна QA", email: "anna@test.local", password: "test123", role: "QA", groupIds: ["g2"] },
+    { id: "u1", name: "Администратор", email: "admin@test.local", password: "admin123", role: "Admin", status: "approved", groupIds: ["g1"] },
+    { id: "u2", name: "Анна QA", email: "anna@test.local", password: "test123", role: "QA", status: "approved", groupIds: ["g2"] },
   ],
   groups: [
     { id: "g1", name: "Regression", description: "Критичные проверки перед релизом" },
@@ -122,6 +122,7 @@ async function loadState() {
   loadedState.suites = loadedState.suites || [];
   loadedState.users.forEach((user) => {
     user.role = normalizeRole(user.role);
+    user.status = normalizeUserStatus(user.status);
     user.groupIds = user.groupIds || [];
     const savedUser = savedState && savedState.users ? savedState.users.find((item) => item.id === user.id) : null;
     if (!user.activeSessionToken && savedUser && savedUser.activeSessionToken === session.token) {
@@ -181,6 +182,7 @@ function clearSession() {
 
 function isValidSession(session, user) {
   if (!session || !session.userId || !user) return false;
+  if (normalizeUserStatus(user.status) !== "approved") return false;
   if (!session.token || user.activeSessionToken !== session.token) return false;
   return Date.now() - Number(session.lastActivityAt || 0) <= sessionTimeoutMs;
 }
@@ -264,6 +266,22 @@ function normalizeRole(role = "QA") {
   return "QA";
 }
 
+function normalizeUserStatus(status = "approved") {
+  const normalized = String(status).trim().toLowerCase();
+  if (normalized === "pending") return "pending";
+  if (normalized === "rejected") return "rejected";
+  return "approved";
+}
+
+function userStatusLabel(status) {
+  const labels = {
+    approved: "Одобрен",
+    pending: "Ожидает одобрения",
+    rejected: "Отклонён",
+  };
+  return labels[normalizeUserStatus(status)];
+}
+
 function roleLabel(role) {
   return normalizeRole(role);
 }
@@ -316,6 +334,10 @@ function canOpenView(target, user = currentUser()) {
   if (isManager(user)) return true;
   if (normalizeRole(user.role) === "QA") return ["dashboard", "cases", "create-case", "edit-case"].includes(target);
   return false;
+}
+
+function pendingUsers() {
+  return state.users.filter((user) => normalizeUserStatus(user.status) === "pending");
 }
 
 function canUseCase(testCase, user = currentUser()) {
@@ -410,6 +432,7 @@ function render() {
           ${canManageSuites() ? navButton("suites", "▣", "Сьюты") : ""}
           ${isAdmin() || isManager() ? navButton("groups", "◌", "Группы") : ""}
           ${isAdmin() || isManager() ? navButton("users", "◎", "Пользователи") : ""}
+          ${isAdmin() ? navButton("registration-requests", "◍", `Заявки${pendingUsers().length ? ` (${pendingUsers().length})` : ""}`) : ""}
         </nav>
         <div class="sidebar-user">
           <div>
@@ -460,6 +483,7 @@ function renderView() {
     "edit-suite": renderEditSuite,
     groups: renderGroups,
     users: renderUsers,
+    "registration-requests": renderRegistrationRequests,
   };
   return views[view]();
 }
@@ -889,6 +913,7 @@ function renderGroupCard(group) {
 
 function renderUsers() {
   if (!isAdmin() && !isManager()) return forbidden();
+  const users = isAdmin() ? state.users : state.users.filter((user) => normalizeUserStatus(user.status) === "approved");
   const createForm = isAdmin()
     ? `<form class="panel form-stack" data-form="user">
         <h2>Новый пользователь</h2>
@@ -905,8 +930,42 @@ function renderUsers() {
     ${topbar("Пользователи", "Команды и доступ", "Добавляйте пользователей и включайте их в группы тестирования.")}
     <section class="grid two-col">
       ${createForm}
-      <div class="user-list">${state.users.map(renderUserCard).join("")}</div>
+      <div class="user-list">${users.map(renderUserCard).join("")}</div>
     </section>
+  `;
+}
+
+function renderRegistrationRequests() {
+  if (!isAdmin()) return forbidden();
+  const requests = pendingUsers();
+
+  return `
+    ${topbar("Регистрация", "Заявки на регистрацию", "Новые пользователи ждут одобрения администратора перед первым входом.")}
+    <section class="user-list">
+      ${requests.map(renderRegistrationRequestCard).join("") || empty("Новых заявок нет")}
+    </section>
+  `;
+}
+
+function renderRegistrationRequestCard(user) {
+  return `
+    <article class="item-card">
+      <form class="form-stack" data-form="registration-request" data-user-id="${user.id}">
+        <div class="item-head">
+          <div>
+            <h3>${escapeHtml(user.name)}</h3>
+            <p class="muted">${escapeHtml(user.email)} · ${escapeHtml(userStatusLabel(user.status))}</p>
+          </div>
+          <span class="badge warn">Новая заявка</span>
+        </div>
+        <label>Роль<select name="role">${renderRoleOptions(user.role)}</select></label>
+        <label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions(user.groupIds)}</select></label>
+        <div class="toolbar">
+          <button class="primary" data-action="approve-registration" data-user-id="${user.id}">Одобрить</button>
+          <button class="danger" type="button" data-reject-registration="${user.id}">Отклонить</button>
+        </div>
+      </form>
+    </article>
   `;
 }
 
@@ -919,13 +978,14 @@ function renderUserCard(user) {
         <div class="item-head">
           <div>
             <h3>${escapeHtml(user.name)}</h3>
-            <p class="muted">${escapeHtml(user.email)} · ${escapeHtml(roleLabel(user.role))}</p>
+            <p class="muted">${escapeHtml(user.email)} · ${escapeHtml(roleLabel(user.role))} · ${escapeHtml(userStatusLabel(user.status))}</p>
           </div>
           ${editableUser ? `<button class="danger" type="button" data-delete-user="${user.id}" ${user.id === state.currentUserId ? "disabled" : ""}>Удалить</button>` : ""}
         </div>
         ${editableUser ? `<label>Имя<input name="name" required value="${escapeHtml(user.name)}" /></label>` : ""}
         ${editableUser ? `<label>Email<input name="email" type="email" required value="${escapeHtml(user.email)}" /></label>` : ""}
         ${editableUser ? `<label>Роль<select name="role">${renderRoleOptions(user.role)}</select></label>` : ""}
+        ${editableUser ? `<label>Статус<select name="status">${renderUserStatusOptions(user.status)}</select></label>` : ""}
         ${editableUser ? `<label>Пароль<input name="password" type="password" required value="${escapeHtml(user.password)}" /></label>` : ""}
         ${editableGroups ? `<label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions(user.groupIds)}</select></label>` : `<div class="badge-row">${groupBadges(user.groupIds)}</div>`}
         ${editableUser || editableGroups ? `<button class="secondary">Сохранить пользователя</button>` : ""}
@@ -983,6 +1043,16 @@ function renderRoleOptions(selected = "QA") {
   const roles = ["Admin", "Manager", "QA"];
   const current = normalizeRole(selected);
   return roles.map((role) => `<option value="${role}" ${role === current ? "selected" : ""}>${role}</option>`).join("");
+}
+
+function renderUserStatusOptions(selected = "approved") {
+  const statuses = [
+    ["approved", "Одобрен"],
+    ["pending", "Ожидает одобрения"],
+    ["rejected", "Отклонён"],
+  ];
+  const current = normalizeUserStatus(selected);
+  return statuses.map(([value, label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
 }
 
 function renderOwnerOptions(selected = currentUser().id) {
@@ -1234,6 +1304,17 @@ app.addEventListener("click", (event) => {
     render();
   }
 
+  if (button.dataset.rejectRegistration) {
+    if (!isAdmin()) return;
+    const user = state.users.find((item) => item.id === button.dataset.rejectRegistration);
+    if (!user) return;
+    user.status = "rejected";
+    user.activeSessionToken = null;
+    user.lastActivityAt = null;
+    saveState();
+    render();
+  }
+
   if (button.dataset.deleteStep) {
     const [caseId, stepId] = button.dataset.deleteStep.split(":");
     const testCase = state.cases.find((item) => item.id === caseId);
@@ -1259,6 +1340,14 @@ app.addEventListener("submit", (event) => {
         alert("Пользователь не найден или пароль неверный");
         return;
       }
+      if (normalizeUserStatus(user.status) === "pending") {
+        alert("Ваша регистрация ожидает одобрения администратора");
+        return;
+      }
+      if (normalizeUserStatus(user.status) === "rejected") {
+        alert("Ваша заявка на регистрацию отклонена");
+        return;
+      }
       state.currentUserId = user.id;
       rememberSession(user);
     } else {
@@ -1266,10 +1355,10 @@ app.addEventListener("submit", (event) => {
         alert("Пользователь с таким email уже есть");
         return;
       }
-      const user = { id: id("u"), name: formData.get("name").trim(), email, password, role: "QA", groupIds: [] };
+      const user = { id: id("u"), name: formData.get("name").trim(), email, password, role: "QA", status: "pending", groupIds: [] };
       state.users.push(user);
-      state.currentUserId = user.id;
-      rememberSession(user);
+      authMode = "login";
+      alert("Заявка отправлена. Вход станет доступен после одобрения администратора.");
     }
     saveState();
     render();
@@ -1363,6 +1452,7 @@ app.addEventListener("submit", (event) => {
       name: formData.get("name").trim(),
       email: formData.get("email").trim(),
       role: normalizeRole(formData.get("role")),
+      status: "approved",
       password: formData.get("password"),
       groupIds: selectedValues(form.elements.groupIds),
     });
@@ -1384,13 +1474,31 @@ app.addEventListener("submit", (event) => {
       user.name = formData.get("name").trim();
       user.email = email;
       user.role = normalizeRole(formData.get("role"));
+      user.status = normalizeUserStatus(formData.get("status"));
       user.password = formData.get("password");
+      if (user.status !== "approved") {
+        user.activeSessionToken = null;
+        user.lastActivityAt = null;
+      }
     }
 
     if (canEditUserGroups(user)) {
       user.groupIds = selectedValues(form.elements.groupIds);
     }
 
+    saveState();
+    render();
+  }
+
+  if (form.dataset.form === "registration-request") {
+    if (!isAdmin()) return;
+    const user = state.users.find((item) => item.id === form.dataset.userId);
+    if (!user) return;
+    user.role = normalizeRole(formData.get("role"));
+    user.status = "approved";
+    user.groupIds = selectedValues(form.elements.groupIds);
+    user.activeSessionToken = null;
+    user.lastActivityAt = null;
     saveState();
     render();
   }
