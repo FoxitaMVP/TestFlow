@@ -60,6 +60,8 @@ function connectDatabase(array $config): PDO
 function ensureSupplementalSchema(PDO $pdo, string $driver): void
 {
     if ($driver === 'sqlite') {
+        addColumnIfMissing($pdo, 'sqlite', 'users', 'active_session_token', 'TEXT');
+        addColumnIfMissing($pdo, 'sqlite', 'users', 'last_activity_at', 'INTEGER');
         $pdo->exec(
             'CREATE TABLE IF NOT EXISTS test_case_assignees (
               test_case_id TEXT NOT NULL,
@@ -73,6 +75,8 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
         return;
     }
 
+    addColumnIfMissing($pdo, 'mysql', 'users', 'active_session_token', 'VARCHAR(80) NULL');
+    addColumnIfMissing($pdo, 'mysql', 'users', 'last_activity_at', 'BIGINT NULL');
     $pdo->exec(
         'CREATE TABLE IF NOT EXISTS test_case_assignees (
           test_case_id VARCHAR(40) NOT NULL,
@@ -83,6 +87,27 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
           CONSTRAINT test_case_assignees_user_fk FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci'
     );
+}
+
+function addColumnIfMissing(PDO $pdo, string $driver, string $table, string $column, string $definition): void
+{
+    if ($driver === 'sqlite') {
+        $columns = $pdo->query("PRAGMA table_info({$table})")->fetchAll();
+        $exists = array_filter($columns, fn ($item) => $item['name'] === $column);
+        if (!$exists) {
+            $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$definition}");
+        }
+        return;
+    }
+
+    $stmt = $pdo->prepare(
+        'SELECT COUNT(*) FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?'
+    );
+    $stmt->execute([$table, $column]);
+    if ((int) $stmt->fetchColumn() === 0) {
+        $pdo->exec("ALTER TABLE {$table} ADD COLUMN {$column} {$definition}");
+    }
 }
 
 function respond(array $payload): void
@@ -109,7 +134,7 @@ function loadState(PDO $pdo): array
 
 function fetchUsers(PDO $pdo): array
 {
-    $users = $pdo->query('SELECT id, name, email, password_hash, role FROM users ORDER BY created_at, id')->fetchAll();
+    $users = $pdo->query('SELECT id, name, email, password_hash, role, active_session_token, last_activity_at FROM users ORDER BY created_at, id')->fetchAll();
     $groupMap = fetchRelationMap($pdo, 'SELECT user_id AS item_id, group_id FROM user_groups');
 
     return array_map(fn ($user) => [
@@ -118,6 +143,8 @@ function fetchUsers(PDO $pdo): array
         'email' => $user['email'],
         'password' => $user['password_hash'],
         'role' => $user['role'],
+        'activeSessionToken' => $user['active_session_token'],
+        'lastActivityAt' => $user['last_activity_at'] ? (int) $user['last_activity_at'] : null,
         'groupIds' => $groupMap[$user['id']] ?? [],
     ], $users);
 }
@@ -220,11 +247,19 @@ function saveGroups(PDO $pdo, array $groups): void
 
 function saveUsers(PDO $pdo, array $users): void
 {
-    $stmt = $pdo->prepare('INSERT INTO users (id, name, email, password_hash, role) VALUES (?, ?, ?, ?, ?)');
+    $stmt = $pdo->prepare('INSERT INTO users (id, name, email, password_hash, role, active_session_token, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
     $link = $pdo->prepare('INSERT INTO user_groups (user_id, group_id) VALUES (?, ?)');
 
     foreach ($users as $user) {
-        $stmt->execute([$user['id'], $user['name'], $user['email'], $user['password'] ?? '', $user['role'] ?? 'Tester']);
+        $stmt->execute([
+            $user['id'],
+            $user['name'],
+            $user['email'],
+            $user['password'] ?? '',
+            $user['role'] ?? 'Tester',
+            $user['activeSessionToken'] ?? null,
+            $user['lastActivityAt'] ?? null,
+        ]);
         foreach ($user['groupIds'] ?? [] as $groupId) {
             $link->execute([$user['id'], $groupId]);
         }

@@ -1,6 +1,8 @@
 const storeKey = "testflow-qa-state-v1";
 const sessionKey = "testflow-qa-session-v1";
 const legacySessionKey = "testflow-qa-current-user";
+const sessionTimeoutMs = 30 * 60 * 1000;
+const sessionTouchIntervalMs = 60 * 1000;
 
 const seedState = {
   currentUserId: null,
@@ -109,8 +111,9 @@ let editingSuiteId = null;
 async function loadState() {
   const apiState = await loadApiState();
   const saved = localStorage.getItem(storeKey);
-  const loadedState = apiState || (saved ? JSON.parse(saved) : structuredClone(seedState));
-  const sessionUserId = currentSessionUserId();
+  const savedState = saved ? JSON.parse(saved) : null;
+  const loadedState = apiState || savedState || structuredClone(seedState);
+  const session = currentSession();
   if (!loadedState.users?.length) {
     return structuredClone(seedState);
   }
@@ -120,13 +123,22 @@ async function loadState() {
   loadedState.users.forEach((user) => {
     user.role = normalizeRole(user.role);
     user.groupIds = user.groupIds || [];
+    const savedUser = savedState?.users?.find((item) => item.id === user.id);
+    if (!user.activeSessionToken && savedUser?.activeSessionToken === session.token) {
+      user.activeSessionToken = savedUser.activeSessionToken;
+      user.lastActivityAt = savedUser.lastActivityAt;
+    }
   });
   loadedState.cases.forEach((testCase) => {
     testCase.steps = testCase.steps.map(normalizeStep);
     testCase.groupIds = testCase.groupIds || [];
     testCase.assignedUserIds = normalizeAssignedUsers(testCase);
   });
-  loadedState.currentUserId = loadedState.users.some((user) => user.id === sessionUserId) ? sessionUserId : null;
+  const sessionUser = loadedState.users.find((user) => user.id === session.userId);
+  loadedState.currentUserId = isValidSession(session, sessionUser) ? session.userId : null;
+  if (!loadedState.currentUserId) {
+    clearSession();
+  }
   return loadedState;
 }
 
@@ -136,13 +148,24 @@ function saveState() {
   saveApiState(persistedState);
 }
 
-function currentSessionUserId() {
-  return localStorage.getItem(sessionKey) || sessionStorage.getItem(sessionKey) || localStorage.getItem(legacySessionKey);
+function currentSession() {
+  const rawSession = localStorage.getItem(sessionKey) || sessionStorage.getItem(sessionKey);
+  if (rawSession) {
+    try {
+      return JSON.parse(rawSession);
+    } catch {
+      return { userId: rawSession };
+    }
+  }
+  return { userId: localStorage.getItem(legacySessionKey) };
 }
 
-function rememberSession(userId) {
-  localStorage.setItem(sessionKey, userId);
-  sessionStorage.setItem(sessionKey, userId);
+function rememberSession(user) {
+  const session = { userId: user.id, token: id("t"), lastActivityAt: Date.now() };
+  user.activeSessionToken = session.token;
+  user.lastActivityAt = session.lastActivityAt;
+  localStorage.setItem(sessionKey, JSON.stringify(session));
+  sessionStorage.setItem(sessionKey, JSON.stringify(session));
   localStorage.removeItem(legacySessionKey);
 }
 
@@ -150,6 +173,47 @@ function clearSession() {
   localStorage.removeItem(sessionKey);
   sessionStorage.removeItem(sessionKey);
   localStorage.removeItem(legacySessionKey);
+}
+
+function isValidSession(session, user) {
+  if (!session?.userId || !user) return false;
+  if (!session.token || user.activeSessionToken !== session.token) return false;
+  return Date.now() - Number(session.lastActivityAt || 0) <= sessionTimeoutMs;
+}
+
+function touchSession() {
+  const user = currentUser();
+  const session = currentSession();
+  if (!isValidSession(session, user)) {
+    state.currentUserId = null;
+    clearSession();
+    renderAuth();
+    return false;
+  }
+
+  const now = Date.now();
+  if (now - Number(session.lastActivityAt || 0) < sessionTouchIntervalMs) return true;
+
+  const nextSession = { ...session, lastActivityAt: now };
+  user.lastActivityAt = now;
+  localStorage.setItem(sessionKey, JSON.stringify(nextSession));
+  sessionStorage.setItem(sessionKey, JSON.stringify(nextSession));
+  saveState();
+  return true;
+}
+
+async function checkRemoteSession() {
+  const user = currentUser();
+  if (!user) return;
+
+  const session = currentSession();
+  const apiState = await loadApiState();
+  const remoteUser = apiState?.users?.find((item) => item.id === user.id);
+  if (!isValidSession(session, remoteUser)) {
+    state.currentUserId = null;
+    clearSession();
+    renderAuth();
+  }
 }
 
 async function loadApiState() {
@@ -313,9 +377,10 @@ function aggregate(cases = state.cases) {
       acc.total += progress.total;
       acc.passed += progress.passed;
       acc.failed += progress.failed;
+      acc.untested += progress.untested;
       return acc;
     },
-    { total: 0, passed: 0, failed: 0 },
+    { total: 0, passed: 0, failed: 0, untested: 0 },
   );
   return {
     ...totals,
@@ -411,7 +476,7 @@ function renderDashboard() {
     <section class="grid two-col" style="margin-top:16px">
       <div class="panel">
         <div class="panel-title"><h2>Прогресс</h2><span class="badge success">${stats.passed}/${stats.total} успешно</span></div>
-        <div class="progress"><span style="width:${stats.passPercent}%"></span></div>
+        ${progressBar(stats)}
         <p class="muted">${stats.failed} шагов упало, ${Math.max(stats.total - stats.passed - stats.failed, 0)} еще без результата.</p>
       </div>
       <div class="panel">
@@ -428,6 +493,24 @@ function renderDashboard() {
 
 function stat(label, value) {
   return `<article class="stat"><span class="muted">${label}</span><strong>${value}</strong></article>`;
+}
+
+function progressBar(progress) {
+  const total = progress.total || 0;
+  if (!total) {
+    return `<div class="progress" aria-label="Прогресс"><span class="progress-empty" style="width:100%"></span></div>`;
+  }
+
+  const passed = Math.round(((progress.passed || 0) / total) * 100);
+  const failed = Math.round(((progress.failed || 0) / total) * 100);
+  const untested = Math.max(0, 100 - passed - failed);
+  return `
+    <div class="progress" aria-label="Прогресс">
+      <span class="progress-passed" style="width:${passed}%"></span>
+      <span class="progress-untested" style="width:${untested}%"></span>
+      <span class="progress-failed" style="width:${failed}%"></span>
+    </div>
+  `;
 }
 
 function renderCases() {
@@ -499,7 +582,7 @@ function renderCaseCard(testCase) {
         <span class="badge success">${progress.passPercent}% успешно</span>
         <span class="badge danger">${progress.failPercent}% не успешно</span>
       </div>
-      <div class="progress"><span style="width:${progress.passPercent}%"></span></div>
+      ${progressBar(progress)}
       <div class="step-table-wrap">
         <div class="case-step-grid step-header">
           <span>Предусловие</span>
@@ -696,7 +779,7 @@ function renderSuiteCard(suite) {
         </div>
       </div>
       <div class="badge-row">${groupBadges(suite.groupIds)}<span class="badge">${cases.length} кейсов</span><span class="badge success">${stats.passPercent}% успешно</span><span class="badge danger">${stats.failPercent}% не успешно</span></div>
-      <div class="progress"><span style="width:${stats.passPercent}%"></span></div>
+      ${progressBar(stats)}
       <div class="badge-row">${cases.map((item) => `<span class="badge">${escapeHtml(item.title)}</span>`).join("") || `<span class="muted">Кейсы не выбраны</span>`}</div>
     </article>
   `;
@@ -1046,6 +1129,7 @@ function selectedValues(select) {
 app.addEventListener("click", (event) => {
   const button = event.target.closest("button");
   if (!button) return;
+  if (state.currentUserId && button.dataset.action !== "logout" && !touchSession()) return;
 
   if (button.dataset.view) {
     if (!canOpenView(button.dataset.view)) return;
@@ -1076,6 +1160,11 @@ app.addEventListener("click", (event) => {
   }
 
   if (button.dataset.action === "logout") {
+    const user = currentUser();
+    if (user) {
+      user.activeSessionToken = null;
+      user.lastActivityAt = null;
+    }
     state.currentUserId = null;
     clearSession();
     saveState();
@@ -1153,6 +1242,7 @@ app.addEventListener("submit", (event) => {
   event.preventDefault();
   const form = event.target;
   const formData = new FormData(form);
+  if (state.currentUserId && form.dataset.form !== "auth" && !touchSession()) return;
 
   if (form.dataset.form === "auth") {
     const email = formData.get("email").trim().toLowerCase();
@@ -1164,7 +1254,7 @@ app.addEventListener("submit", (event) => {
         return;
       }
       state.currentUserId = user.id;
-      rememberSession(user.id);
+      rememberSession(user);
     } else {
       if (state.users.some((item) => item.email.toLowerCase() === email)) {
         alert("Пользователь с таким email уже есть");
@@ -1173,7 +1263,7 @@ app.addEventListener("submit", (event) => {
       const user = { id: id("u"), name: formData.get("name").trim(), email, password, role: "QA", groupIds: [] };
       state.users.push(user);
       state.currentUserId = user.id;
-      rememberSession(user.id);
+      rememberSession(user);
     }
     saveState();
     render();
@@ -1301,6 +1391,8 @@ app.addEventListener("submit", (event) => {
 });
 
 app.addEventListener("change", (event) => {
+  if (state.currentUserId && !touchSession()) return;
+
   if (event.target.dataset.editSuiteGroups !== undefined) {
     if (!canManageSuites()) return;
     editingSuiteGroupIds = selectedValues(event.target);
@@ -1321,6 +1413,8 @@ app.addEventListener("change", (event) => {
 });
 
 app.addEventListener("input", (event) => {
+  if (state.currentUserId && !touchSession()) return;
+
   if (event.target.dataset.stepField) {
     const [caseId, stepId, field] = event.target.dataset.stepField.split(":");
     const testCase = state.cases.find((item) => item.id === caseId);
@@ -1338,6 +1432,7 @@ async function init() {
   if (apiAvailable) {
     saveApiState(state);
   }
+  setInterval(checkRemoteSession, sessionTouchIntervalMs);
 }
 
 init();

@@ -411,12 +411,26 @@ h3 {
   height: 10px;
   border-radius: 999px;
   background: #e9eef2;
+  display: flex;
 }
 
 .progress > span {
   display: block;
   height: 100%;
+  min-width: 0;
+}
+
+.progress-passed {
   background: var(--success);
+}
+
+.progress-untested,
+.progress-empty {
+  background: #c8d1d9;
+}
+
+.progress-failed {
+  background: var(--danger);
 }
 
 .step-row {
