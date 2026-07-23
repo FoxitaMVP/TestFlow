@@ -125,7 +125,7 @@ async function loadState() {
   loadedState.users.forEach((user) => {
     const savedUser = savedState && savedState.users ? savedState.users.find((item) => item.id === user.id) : null;
     if (savedUser) {
-      if (!user.status || (normalizeUserStatus(user.status) === "approved" && normalizeUserStatus(savedUser.status) === "pending")) {
+      if (!user.status) {
         user.status = savedUser.status;
       }
       if (!user.requestedAt && savedUser.requestedAt) {
@@ -145,6 +145,7 @@ async function loadState() {
     testCase.groupIds = testCase.groupIds || [];
     testCase.assignedUserIds = normalizeAssignedUsers(testCase);
   });
+  loadedState.remoteUsers = apiState && apiState.users ? cloneState(apiState.users) : [];
   const sessionUser = loadedState.users.find((user) => user.id === session.userId);
   loadedState.currentUserId = isValidSession(session, sessionUser) ? session.userId : null;
   if (!loadedState.currentUserId) {
@@ -154,9 +155,25 @@ async function loadState() {
 }
 
 function saveState() {
-  const persistedState = { ...state, currentUserId: null };
+  const { remoteUsers, ...stateForSave } = state;
+  const persistedState = { ...stateForSave, currentUserId: null };
   localStorage.setItem(storeKey, JSON.stringify(persistedState));
-  saveApiState(persistedState);
+  saveApiState(mergeWithRemoteState(persistedState));
+}
+
+function mergeWithRemoteState(nextState) {
+  if (!state.remoteUsers) return nextState;
+
+  const users = nextState.users.map((user) => {
+    const remoteUser = state.remoteUsers.find((item) => item.id === user.id);
+    if (!remoteUser) return user;
+    if (normalizeUserStatus(remoteUser.status) === "approved" && normalizeUserStatus(user.status) === "pending") {
+      return { ...user, status: "approved", requestedAt: remoteUser.requestedAt || user.requestedAt };
+    }
+    return user;
+  });
+
+  return { ...nextState, users };
 }
 
 function cloneState(value) {
@@ -260,6 +277,8 @@ async function saveApiState(nextState) {
       const payload = await response.json().catch(() => ({}));
       console.error("Не удалось сохранить данные в API", payload);
       notify(payload.error ? `Ошибка сохранения: ${payload.error}` : "Ошибка сохранения в БД.");
+    } else {
+      state.remoteUsers = cloneState(nextState.users || []);
     }
   } catch {
     apiAvailable = false;
@@ -1044,8 +1063,8 @@ function renderAuth() {
             <button type="button" class="${authMode === "register" ? "active" : ""}" data-auth-mode="register">Регистрация</button>
           </div>
           ${authMode === "register" ? `<label>Имя<input name="name" required placeholder="Ваше имя" /></label>` : ""}
-          <label>Email<input name="email" type="email" required value="${authMode === "login" ? "admin@test.local" : ""}" /></label>
-          <label>Пароль<input name="password" type="password" required value="${authMode === "login" ? "admin123" : ""}" /></label>
+          <label>Email<input name="email" type="email" required placeholder="email@company.com" /></label>
+          <label>Пароль<input name="password" type="password" required placeholder="Пароль" /></label>
           ${authNotice ? `<p class="notice">${escapeHtml(authNotice)}</p>` : ""}
           <button class="primary">${authMode === "login" ? "Войти" : "Создать аккаунт"}</button>
           <p class="muted">Демо-вход: admin@test.local / admin123</p>
@@ -1307,6 +1326,7 @@ app.addEventListener("click", (event) => {
     state.suites.forEach((suite) => {
       suite.caseIds = suite.caseIds.filter((caseId) => caseId !== button.dataset.deleteCase);
     });
+    notify("Кейс удалён.");
     saveState();
     render();
   }
@@ -1315,6 +1335,7 @@ app.addEventListener("click", (event) => {
     if (!isAdmin()) return;
     state.suites = state.suites.filter((item) => item.id !== button.dataset.deleteSuite);
     if (selectedCaseSuiteId === button.dataset.deleteSuite) selectedCaseSuiteId = "all";
+    notify("Сьют удалён.");
     saveState();
     render();
   }
@@ -1328,6 +1349,7 @@ app.addEventListener("click", (event) => {
     });
     editingSuiteGroupIds = editingSuiteGroupIds.filter((idValue) => idValue !== groupId);
     if (selectedGroupId === groupId) selectedGroupId = "all";
+    notify("Группа удалена.");
     saveState();
     render();
   }
@@ -1364,6 +1386,7 @@ app.addEventListener("click", (event) => {
     const testCase = state.cases.find((item) => item.id === caseId);
     if (!canEditCase(testCase)) return;
     testCase.steps = testCase.steps.filter((step) => step.id !== stepId);
+    notify("Шаг удалён.");
     saveState();
     render();
   }
@@ -1446,6 +1469,7 @@ app.addEventListener("submit", (event) => {
 
     state.cases.unshift(newCase);
     syncCaseSuites(newCase.id, suiteIds);
+    notify("Кейс создан.");
     saveState();
     view = "cases";
     render();
@@ -1460,6 +1484,7 @@ app.addEventListener("submit", (event) => {
       groupIds: selectedValues(form.elements.groupIds),
       caseIds: selectedValues(form.elements.caseIds),
     });
+    notify("Сьют создан.");
     saveState();
     view = "suites";
     render();
@@ -1479,6 +1504,7 @@ app.addEventListener("submit", (event) => {
     testCase.groupIds = groupIdsFromSuites(suiteIds);
     testCase.steps.push(...collectStepRows(form));
     syncCaseSuites(testCase.id, suiteIds);
+    notify("Кейс сохранён.");
     saveState();
     view = "cases";
     render();
@@ -1492,6 +1518,7 @@ app.addEventListener("submit", (event) => {
     const addedCaseIds = selectedValues(form.elements.caseIds);
     suite.groupIds = selectedValues(form.elements.groupIds);
     suite.caseIds = Array.from(new Set([...suite.caseIds, ...addedCaseIds]));
+    notify("Сьют сохранён.");
     saveState();
     view = "suites";
     render();
@@ -1504,6 +1531,7 @@ app.addEventListener("submit", (event) => {
       name: formData.get("name").trim(),
       description: formData.get("description").trim(),
     });
+    notify("Группа создана.");
     saveState();
     render();
   }
@@ -1587,6 +1615,7 @@ app.addEventListener("change", (event) => {
     const step = findStep(caseId, stepId);
     if (!step) return;
     step.status = event.target.value;
+    notify("Статус шага сохранён.");
     saveState();
     render();
   }
@@ -1609,9 +1638,6 @@ app.addEventListener("input", (event) => {
 async function init() {
   state = await loadState();
   render();
-  if (apiAvailable) {
-    saveApiState(state);
-  }
   setInterval(checkRemoteSession, sessionTouchIntervalMs);
 }
 
