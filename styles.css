@@ -172,6 +172,33 @@ textarea:focus {
   box-shadow: 0 0 0 3px rgba(15, 139, 141, 0.14);
 }
 
+.password-field {
+  position: relative;
+  display: block;
+}
+
+.password-field input {
+  padding-right: 92px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  min-height: 28px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background: #eef6f6;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  transform: translateY(-50%);
+}
+
+.password-toggle:hover {
+  background: #dff0f0;
+}
+
 .primary,
 .secondary,
 .danger,

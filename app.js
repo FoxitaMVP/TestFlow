@@ -1144,10 +1144,14 @@ function renderAuth() {
           </div>
           ${authMode === "register" ? `<label>Имя<input name="name" required placeholder="Ваше имя" /></label>` : ""}
           <label>Email<input name="email" type="email" required placeholder="email@company.com" /></label>
-          <label>Пароль<input name="password" type="password" required placeholder="Пароль" /></label>
+          <label>Пароль
+            <span class="password-field">
+              <input name="password" type="password" required placeholder="Пароль" data-password-input />
+              <button type="button" class="password-toggle" data-action="toggle-password">Показать</button>
+            </span>
+          </label>
           ${authNotice ? `<p class="notice">${escapeHtml(authNotice)}</p>` : ""}
           <button class="primary">${authMode === "login" ? "Войти" : "Создать аккаунт"}</button>
-          <p class="muted">Демо-вход: admin@test.local / admin123</p>
         </form>
       </div>
     </section>
@@ -1426,6 +1430,15 @@ app.addEventListener("click", (event) => {
     authMode = button.dataset.authMode;
     authNotice = "";
     renderAuth();
+  }
+
+  if (button.dataset.action === "toggle-password") {
+    const field = button.closest(".password-field");
+    const input = field ? field.querySelector("[data-password-input]") : null;
+    if (!input) return;
+    const isHidden = input.type === "password";
+    input.type = isHidden ? "text" : "password";
+    button.textContent = isHidden ? "Скрыть" : "Показать";
   }
 
   if (button.dataset.action === "logout") {
