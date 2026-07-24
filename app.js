@@ -103,6 +103,7 @@ let apiAvailable = false;
 let view = "dashboard";
 let authMode = "login";
 let authNotice = "";
+let resetToken = new URLSearchParams(window.location.search).get("reset") || "";
 let appNotice = "";
 let selectedGroupId = "all";
 let selectedCaseSuiteId = "all";
@@ -114,6 +115,10 @@ let userModalMode = null;
 let editingUserId = null;
 let groupModalMode = null;
 let editingGroupId = null;
+
+if (resetToken) {
+  authMode = "reset";
+}
 
 async function loadState() {
   const apiState = await loadApiState();
@@ -289,6 +294,19 @@ async function saveApiState(nextState) {
     apiAvailable = false;
     console.error("API недоступен, данные сохранены только локально.");
   }
+}
+
+async function postAuthAction(action, payload) {
+  const response = await fetch(`api/index.php?action=${action}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.error) {
+    throw new Error(data.error || "Не удалось выполнить запрос.");
+  }
+  return data;
 }
 
 function id(prefix) {
@@ -1127,6 +1145,22 @@ function renderUserModal() {
 }
 
 function renderAuth() {
+  const titleByMode = {
+    login: "Вход",
+    register: "Регистрация",
+    forgot: "Восстановление пароля",
+    reset: "Новый пароль",
+  };
+  const submitByMode = {
+    login: "Войти",
+    register: "Создать аккаунт",
+    forgot: "Отправить ссылку",
+    reset: "Сохранить пароль",
+  };
+  const showEmail = authMode !== "reset";
+  const showPassword = authMode === "login" || authMode === "register";
+  const showResetPassword = authMode === "reset";
+
   app.innerHTML = `
     <section class="auth-shell">
       <div class="auth-visual">
@@ -1138,16 +1172,24 @@ function renderAuth() {
       </div>
       <div class="auth-panel">
         <form class="auth-card form-stack" data-form="auth">
-          <div class="auth-tabs">
-            <button type="button" class="${authMode === "login" ? "active" : ""}" data-auth-mode="login">Вход</button>
-            <button type="button" class="${authMode === "register" ? "active" : ""}" data-auth-mode="register">Регистрация</button>
+          <div>
+            <div class="auth-tabs">
+              <button type="button" class="${authMode === "login" ? "active" : ""}" data-auth-mode="login">Вход</button>
+              <button type="button" class="${authMode === "register" ? "active" : ""}" data-auth-mode="register">Регистрация</button>
+            </div>
+            ${authMode === "forgot" || authMode === "reset" ? `<h2 class="auth-title">${titleByMode[authMode]}</h2>` : ""}
           </div>
           ${authMode === "register" ? `<label>Имя<input name="name" required placeholder="Ваше имя" /></label>` : ""}
-          <label>Email<input name="email" type="email" required placeholder="email@company.com" /></label>
-          <label>Пароль<input name="password" type="password" required placeholder="Пароль" /></label>
+          ${showEmail ? `<label>Email<input name="email" type="email" required placeholder="email@company.com" /></label>` : ""}
+          ${showPassword ? `<label>Пароль<input name="password" type="password" required placeholder="Пароль" /></label>` : ""}
+          ${showResetPassword ? `
+            <label>Новый пароль<input name="password" type="password" required minlength="6" placeholder="Минимум 6 символов" /></label>
+            <label>Повторите пароль<input name="passwordRepeat" type="password" required minlength="6" placeholder="Повторите новый пароль" /></label>
+          ` : ""}
           ${authNotice ? `<p class="notice">${escapeHtml(authNotice)}</p>` : ""}
-          <button class="primary">${authMode === "login" ? "Войти" : "Создать аккаунт"}</button>
-          <p class="muted">Демо-вход: admin@test.local / admin123</p>
+          <button class="primary">${submitByMode[authMode]}</button>
+          ${authMode === "login" ? `<button type="button" class="link-button" data-auth-mode="forgot">Забыли пароль?</button>` : ""}
+          ${authMode === "forgot" || authMode === "reset" ? `<button type="button" class="link-button" data-auth-mode="login">Вернуться ко входу</button>` : ""}
         </form>
       </div>
     </section>
@@ -1425,6 +1467,10 @@ app.addEventListener("click", (event) => {
   if (button.dataset.authMode) {
     authMode = button.dataset.authMode;
     authNotice = "";
+    if (authMode !== "reset" && resetToken) {
+      resetToken = "";
+      window.history.replaceState({}, "", window.location.pathname);
+    }
     renderAuth();
   }
 
@@ -1535,15 +1581,44 @@ app.addEventListener("click", (event) => {
   }
 });
 
-app.addEventListener("submit", (event) => {
+app.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
   const formData = new FormData(form);
   if (state.currentUserId && form.dataset.form !== "auth" && !touchSession()) return;
 
   if (form.dataset.form === "auth") {
-    const email = formData.get("email").trim().toLowerCase();
+    const email = String(formData.get("email") || "").trim().toLowerCase();
     const password = formData.get("password");
+    if (authMode === "forgot") {
+      try {
+        await postAuthAction("password-reset-request", { email });
+        authNotice = "Если email найден и учётная запись активна, мы отправили ссылку восстановления.";
+      } catch (error) {
+        authNotice = error.message;
+      }
+      renderAuth();
+      return;
+    }
+    if (authMode === "reset") {
+      if (password !== formData.get("passwordRepeat")) {
+        authNotice = "Пароли не совпадают.";
+        renderAuth();
+        return;
+      }
+      try {
+        await postAuthAction("password-reset-confirm", { token: resetToken, password });
+        resetToken = "";
+        window.history.replaceState({}, "", window.location.pathname);
+        authMode = "login";
+        authNotice = "Пароль изменён. Теперь можно войти с новым паролем.";
+      } catch (error) {
+        authNotice = error.message;
+      }
+      state = await loadState();
+      renderAuth();
+      return;
+    }
     if (authMode === "login") {
       const user = state.users.find((item) => item.email.toLowerCase() === email && item.password === password);
       if (!user) {

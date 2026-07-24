@@ -8,10 +8,13 @@ CREATE TABLE users (
   requested_at BIGINT NULL,
   active_session_token VARCHAR(80) NULL,
   last_activity_at BIGINT NULL,
+  password_reset_token VARCHAR(128) NULL,
+  password_reset_expires_at BIGINT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY users_email_unique (email)
+  UNIQUE KEY users_email_unique (email),
+  KEY users_password_reset_token_idx (password_reset_token)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE qa_groups (

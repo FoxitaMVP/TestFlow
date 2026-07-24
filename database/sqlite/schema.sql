@@ -10,9 +10,13 @@ CREATE TABLE users (
   requested_at INTEGER,
   active_session_token TEXT,
   last_activity_at INTEGER,
+  password_reset_token TEXT,
+  password_reset_expires_at INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE INDEX users_password_reset_token_idx ON users (password_reset_token);
 
 CREATE TABLE qa_groups (
   id TEXT PRIMARY KEY,
