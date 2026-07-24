@@ -96,6 +96,13 @@ button {
   box-shadow: var(--shadow);
 }
 
+.auth-title {
+  margin: -8px 0 6px;
+  font-size: 22px;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
 .auth-tabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -122,6 +129,14 @@ button {
 .filter-chip.active {
   background: var(--accent);
   color: #fff;
+}
+
+.link-button {
+  justify-self: center;
+  padding: 0;
+  background: transparent;
+  color: var(--accent);
+  font-weight: 800;
 }
 
 .form-stack {

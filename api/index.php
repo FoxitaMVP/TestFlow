@@ -30,6 +30,22 @@ try {
         respond(['ok' => true]);
     }
 
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'password-reset-request') {
+        $payload = json_decode(file_get_contents('php://input'), true, flags: JSON_THROW_ON_ERROR);
+        requestPasswordReset($pdo, $config, trim(strtolower((string) ($payload['email'] ?? ''))));
+        respond(['ok' => true]);
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'password-reset-confirm') {
+        $payload = json_decode(file_get_contents('php://input'), true, flags: JSON_THROW_ON_ERROR);
+        confirmPasswordReset(
+            $pdo,
+            trim((string) ($payload['token'] ?? '')),
+            (string) ($payload['password'] ?? '')
+        );
+        respond(['ok' => true]);
+    }
+
     http_response_code(404);
     respond(['error' => 'Unknown API endpoint']);
 } catch (Throwable $error) {
@@ -64,6 +80,8 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
         addColumnIfMissing($pdo, 'sqlite', 'users', 'requested_at', 'INTEGER');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'active_session_token', 'TEXT');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'last_activity_at', 'INTEGER');
+        addColumnIfMissing($pdo, 'sqlite', 'users', 'password_reset_token', 'TEXT');
+        addColumnIfMissing($pdo, 'sqlite', 'users', 'password_reset_expires_at', 'INTEGER');
         $pdo->exec(
             'CREATE TABLE IF NOT EXISTS test_case_assignees (
               test_case_id TEXT NOT NULL,
@@ -81,6 +99,8 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
     addColumnIfMissing($pdo, 'mysql', 'users', 'requested_at', 'BIGINT NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'active_session_token', 'VARCHAR(80) NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'last_activity_at', 'BIGINT NULL');
+    addColumnIfMissing($pdo, 'mysql', 'users', 'password_reset_token', 'VARCHAR(128) NULL');
+    addColumnIfMissing($pdo, 'mysql', 'users', 'password_reset_expires_at', 'BIGINT NULL');
     $pdo->exec(
         'CREATE TABLE IF NOT EXISTS test_case_assignees (
           test_case_id VARCHAR(40) NOT NULL,
@@ -118,6 +138,12 @@ function respond(array $payload): void
 {
     echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
     exit;
+}
+
+function errorResponse(string $message, int $status = 400): void
+{
+    http_response_code($status);
+    respond(['error' => $message]);
 }
 
 function loadState(PDO $pdo): array
@@ -222,12 +248,13 @@ function fetchRelationMap(PDO $pdo, string $query): array
 function saveState(PDO $pdo, array $state): void
 {
     $state = normalizeStateReferences($state);
+    $userServerFields = fetchUserServerFields($pdo);
     $pdo->beginTransaction();
 
     try {
         clearState($pdo);
         saveGroups($pdo, $state['groups'] ?? []);
-        saveUsers($pdo, $state['users'] ?? []);
+        saveUsers($pdo, $state['users'] ?? [], $userServerFields);
         saveCases($pdo, $state['cases'] ?? []);
         saveSuites($pdo, $state['suites'] ?? []);
         $pdo->commit();
@@ -235,6 +262,19 @@ function saveState(PDO $pdo, array $state): void
         $pdo->rollBack();
         throw $error;
     }
+}
+
+function fetchUserServerFields(PDO $pdo): array
+{
+    $fields = [];
+    $rows = $pdo->query('SELECT id, password_reset_token, password_reset_expires_at FROM users')->fetchAll();
+    foreach ($rows as $row) {
+        $fields[$row['id']] = [
+            'password_reset_token' => $row['password_reset_token'] ?? null,
+            'password_reset_expires_at' => $row['password_reset_expires_at'] ? (int) $row['password_reset_expires_at'] : null,
+        ];
+    }
+    return $fields;
 }
 
 function normalizeStateReferences(array $state): array
@@ -274,12 +314,17 @@ function saveGroups(PDO $pdo, array $groups): void
     }
 }
 
-function saveUsers(PDO $pdo, array $users): void
+function saveUsers(PDO $pdo, array $users, array $serverFields = []): void
 {
-    $stmt = $pdo->prepare('INSERT INTO users (id, name, email, password_hash, role, status, requested_at, active_session_token, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $stmt = $pdo->prepare(
+        'INSERT INTO users
+         (id, name, email, password_hash, role, status, requested_at, active_session_token, last_activity_at, password_reset_token, password_reset_expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    );
     $link = $pdo->prepare('INSERT INTO user_groups (user_id, group_id) VALUES (?, ?)');
 
     foreach ($users as $user) {
+        $serverUserFields = $serverFields[$user['id']] ?? [];
         $stmt->execute([
             $user['id'],
             $user['name'],
@@ -290,11 +335,156 @@ function saveUsers(PDO $pdo, array $users): void
             $user['requestedAt'] ?? null,
             $user['activeSessionToken'] ?? null,
             $user['lastActivityAt'] ?? null,
+            $serverUserFields['password_reset_token'] ?? null,
+            $serverUserFields['password_reset_expires_at'] ?? null,
         ]);
         foreach ($user['groupIds'] ?? [] as $groupId) {
             $link->execute([$user['id'], $groupId]);
         }
     }
+}
+
+function requestPasswordReset(PDO $pdo, array $config, string $email): void
+{
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return;
+    }
+
+    $stmt = $pdo->prepare("SELECT id, email, status FROM users WHERE LOWER(email) = ? LIMIT 1");
+    $stmt->execute([$email]);
+    $user = $stmt->fetch();
+    if (!$user || ($user['status'] ?? 'approved') !== 'approved') {
+        return;
+    }
+
+    $token = bin2hex(random_bytes(32));
+    $expiresAt = (int) floor(microtime(true) * 1000) + (30 * 60 * 1000);
+    $update = $pdo->prepare('UPDATE users SET password_reset_token = ?, password_reset_expires_at = ? WHERE id = ?');
+    $update->execute([$token, $expiresAt, $user['id']]);
+
+    sendPasswordResetEmail($config, $user['email'], buildResetUrl($config, $token));
+}
+
+function confirmPasswordReset(PDO $pdo, string $token, string $password): void
+{
+    if ($token === '' || strlen($password) < 6) {
+        errorResponse('Ссылка восстановления недействительна или пароль слишком короткий.');
+    }
+
+    $stmt = $pdo->prepare('SELECT id, password_reset_expires_at FROM users WHERE password_reset_token = ? LIMIT 1');
+    $stmt->execute([$token]);
+    $user = $stmt->fetch();
+    if (!$user || (int) $user['password_reset_expires_at'] < (int) floor(microtime(true) * 1000)) {
+        errorResponse('Ссылка восстановления устарела. Запросите новую ссылку.');
+    }
+
+    $update = $pdo->prepare(
+        'UPDATE users
+         SET password_hash = ?, password_reset_token = NULL, password_reset_expires_at = NULL,
+             active_session_token = NULL, last_activity_at = NULL
+         WHERE id = ?'
+    );
+    $update->execute([$password, $user['id']]);
+}
+
+function buildResetUrl(array $config, string $token): string
+{
+    $baseUrl = trim((string) ($config['app_url'] ?? ''));
+    if ($baseUrl === '') {
+        $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+        $scriptDir = rtrim(str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '')), '/');
+        $baseDir = preg_replace('#/api$#', '', $scriptDir);
+        $baseUrl = "{$scheme}://{$host}{$baseDir}";
+    }
+
+    return rtrim($baseUrl, '/') . '/?reset=' . rawurlencode($token);
+}
+
+function sendPasswordResetEmail(array $config, string $email, string $resetUrl): void
+{
+    $mail = $config['mail'] ?? [];
+    $smtp = $mail['smtp'] ?? [];
+    $host = (string) ($smtp['host'] ?? '');
+    $port = (int) ($smtp['port'] ?? 465);
+    $username = (string) ($smtp['username'] ?? '');
+    $password = (string) ($smtp['password'] ?? '');
+    $fromEmail = (string) ($mail['from_email'] ?? $username);
+    $fromName = (string) ($mail['from_name'] ?? 'TestFlow QA');
+
+    if ($host === '' || $username === '' || $password === '' || $fromEmail === '') {
+        throw new RuntimeException('SMTP для восстановления пароля не настроен.');
+    }
+
+    $subject = 'Восстановление пароля TestFlow QA';
+    $body = "Здравствуйте!\r\n\r\n"
+        . "Для восстановления пароля откройте ссылку:\r\n{$resetUrl}\r\n\r\n"
+        . "Ссылка действует 30 минут. Если вы не запрашивали восстановление, просто игнорируйте это письмо.\r\n";
+
+    smtpSend($host, $port, $username, $password, $fromEmail, $fromName, $email, $subject, $body);
+}
+
+function smtpSend(string $host, int $port, string $username, string $password, string $fromEmail, string $fromName, string $toEmail, string $subject, string $body): void
+{
+    $socket = stream_socket_client("ssl://{$host}:{$port}", $errno, $errstr, 30);
+    if (!$socket) {
+        throw new RuntimeException("SMTP недоступен: {$errstr}");
+    }
+
+    try {
+        smtpExpect($socket, [220]);
+        smtpCommand($socket, 'EHLO ' . ($_SERVER['HTTP_HOST'] ?? 'localhost'), [250]);
+        smtpCommand($socket, 'AUTH LOGIN', [334]);
+        smtpCommand($socket, base64_encode($username), [334]);
+        smtpCommand($socket, base64_encode($password), [235]);
+        smtpCommand($socket, 'MAIL FROM:<' . $fromEmail . '>', [250]);
+        smtpCommand($socket, 'RCPT TO:<' . $toEmail . '>', [250, 251]);
+        smtpCommand($socket, 'DATA', [354]);
+
+        $headers = [
+            'From: ' . mimeHeader($fromName) . ' <' . $fromEmail . '>',
+            'To: <' . $toEmail . '>',
+            'Subject: ' . mimeHeader($subject),
+            'MIME-Version: 1.0',
+            'Content-Type: text/plain; charset=UTF-8',
+            'Content-Transfer-Encoding: 8bit',
+        ];
+        $message = implode("\r\n", $headers) . "\r\n\r\n" . preg_replace('/^\./m', '..', $body);
+        fwrite($socket, $message . "\r\n.\r\n");
+        smtpExpect($socket, [250]);
+        smtpCommand($socket, 'QUIT', [221]);
+    } finally {
+        fclose($socket);
+    }
+}
+
+function smtpCommand($socket, string $command, array $expectedCodes): string
+{
+    fwrite($socket, $command . "\r\n");
+    return smtpExpect($socket, $expectedCodes);
+}
+
+function smtpExpect($socket, array $expectedCodes): string
+{
+    $response = '';
+    while (($line = fgets($socket, 515)) !== false) {
+        $response .= $line;
+        if (isset($line[3]) && $line[3] === ' ') {
+            break;
+        }
+    }
+
+    $code = (int) substr($response, 0, 3);
+    if (!in_array($code, $expectedCodes, true)) {
+        throw new RuntimeException('SMTP ошибка: ' . trim($response));
+    }
+
+    return $response;
+}
+
+function mimeHeader(string $value): string
+{
+    return '=?UTF-8?B?' . base64_encode($value) . '?=';
 }
 
 function saveCases(PDO $pdo, array $cases): void
