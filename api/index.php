@@ -49,7 +49,8 @@ function connectDatabase(array $config): PDO
 
     $mysql = $config['mysql'];
     $charset = $mysql['charset'] ?? 'utf8mb4';
-    $dsn = "mysql:host={$mysql['host']};dbname={$mysql['dbname']};charset={$charset}";
+    $port = $mysql['port'] ?? '3306';
+    $dsn = "mysql:host={$mysql['host']};port={$port};dbname={$mysql['dbname']};charset={$charset}";
     $pdo = new PDO($dsn, $mysql['user'], $mysql['password']);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
