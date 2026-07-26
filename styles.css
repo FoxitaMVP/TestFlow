@@ -413,6 +413,18 @@ h3 {
   gap: 12px;
 }
 
+.case-search {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 14px;
+}
+
+.case-search button {
+  min-height: 42px;
+}
+
 .data-table,
 .user-table {
   display: grid;
@@ -750,6 +762,10 @@ h3 {
   .topbar,
   .item-head {
     flex-direction: column;
+  }
+
+  .case-search {
+    grid-template-columns: 1fr;
   }
 }
 

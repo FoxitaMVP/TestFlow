@@ -106,6 +106,7 @@ let authNotice = "";
 let appNotice = "";
 let selectedGroupId = "all";
 let selectedCaseSuiteId = "all";
+let caseSearchQuery = "";
 let expandedCaseId = null;
 let editingSuiteGroupIds = [];
 let editingCaseId = null;
@@ -731,7 +732,8 @@ function progressBar(progress) {
 }
 
 function renderCases() {
-  const filtered = filterCasesBySuite(visibleCases());
+  const filtered = filterCasesBySearch(filterCasesBySuite(visibleCases()));
+  const emptyText = caseSearchQuery.trim() ? "Кейсы по запросу не найдены" : "Нет кейсов в выбранном сьюте";
   return `
     ${topbar(
       "Тест-кейсы",
@@ -739,9 +741,22 @@ function renderCases() {
       "Список кейсов, их сьюты, группы, ответственные и текущий прогресс по строкам проверки.",
       canCreateCases() ? `<button class="primary" data-view="create-case">Создать кейс</button>` : "",
     )}
+    ${renderCaseSearch()}
     ${renderCaseSuiteFilters()}
     <section>
-      <div class="case-list">${filtered.map(renderCaseCard).join("") || empty("Нет кейсов в выбранном сьюте")}</div>
+      <div class="case-list">${filtered.map(renderCaseCard).join("") || empty(emptyText)}</div>
+    </section>
+  `;
+}
+
+function renderCaseSearch() {
+  return `
+    <section class="case-search">
+      <label>
+        Поиск по кейсам
+        <input data-case-search value="${escapeHtml(caseSearchQuery)}" placeholder="Название, описание, шаг, группа, сьют или ответственный" autocomplete="off" />
+      </label>
+      ${caseSearchQuery.trim() ? `<button class="secondary" type="button" data-clear-case-search>Очистить</button>` : ""}
     </section>
   `;
 }
@@ -1375,6 +1390,45 @@ function filterCasesBySuite(items) {
   return items.filter((item) => suite.caseIds.includes(item.id));
 }
 
+function filterCasesBySearch(items) {
+  const query = caseSearchQuery.trim().toLowerCase();
+  if (!query) return items;
+
+  return items.filter((testCase) => caseSearchText(testCase).includes(query));
+}
+
+function caseSearchText(testCase) {
+  const owner = state.users.find((user) => user.id === testCase.ownerId);
+  const assignedUsers = (testCase.assignedUserIds || [])
+    .map((userId) => state.users.find((user) => user.id === userId))
+    .filter(Boolean);
+  const groups = (testCase.groupIds || [])
+    .map((groupId) => state.groups.find((group) => group.id === groupId))
+    .filter(Boolean);
+  const suites = state.suites.filter((suite) => suite.caseIds.includes(testCase.id));
+  const steps = (testCase.steps || []).flatMap((step) => [
+    step.precondition,
+    step.action,
+    step.expected,
+    step.actual,
+    step.comment,
+    statusLabel(step.status),
+  ]);
+
+  return [
+    testCase.title,
+    testCase.description,
+    owner && owner.name,
+    ...assignedUsers.map((user) => user.name),
+    ...groups.flatMap((group) => [group.name, group.description]),
+    ...suites.flatMap((suite) => [suite.title, suite.description]),
+    ...steps,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
 function visibleCases() {
   return state.cases.filter((testCase) => canUseCase(testCase));
 }
@@ -1597,6 +1651,11 @@ app.addEventListener("click", (event) => {
 
   if (button.dataset.filterSuite) {
     selectedCaseSuiteId = button.dataset.filterSuite;
+    render();
+  }
+
+  if (button.dataset.clearCaseSearch !== undefined) {
+    caseSearchQuery = "";
     render();
   }
 
@@ -1928,6 +1987,17 @@ app.addEventListener("change", (event) => {
 
 app.addEventListener("input", (event) => {
   if (state.currentUserId && !touchSession()) return;
+
+  if (event.target.dataset.caseSearch !== undefined) {
+    caseSearchQuery = event.target.value;
+    render();
+    const search = app.querySelector("[data-case-search]");
+    if (search) {
+      search.focus();
+      search.setSelectionRange(search.value.length, search.value.length);
+    }
+    return;
+  }
 
   if (event.target.dataset.stepField) {
     const [caseId, stepId, field] = event.target.dataset.stepField.split(":");
