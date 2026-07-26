@@ -3,6 +3,7 @@ const sessionKey = "testflow-qa-session-v1";
 const legacySessionKey = "testflow-qa-current-user";
 const sessionTimeoutMs = 30 * 60 * 1000;
 const sessionTouchIntervalMs = 60 * 1000;
+const rejectedUserRetentionMs = 72 * 60 * 60 * 1000;
 
 const seedState = {
   currentUserId: null,
@@ -129,6 +130,7 @@ async function loadState() {
   loadedState.groups = loadedState.groups || [];
   loadedState.cases = loadedState.cases || [];
   loadedState.suites = loadedState.suites || [];
+  loadedState.users = pruneExpiredRejectedUsers(loadedState.users);
   loadedState.users.forEach((user) => {
     const savedUser = savedState && savedState.users ? savedState.users.find((item) => item.id === user.id) : null;
     if (savedUser) {
@@ -138,9 +140,15 @@ async function loadState() {
       if (!user.requestedAt && savedUser.requestedAt) {
         user.requestedAt = savedUser.requestedAt;
       }
+      if (!user.rejectedAt && savedUser.rejectedAt) {
+        user.rejectedAt = savedUser.rejectedAt;
+      }
     }
     user.role = normalizeRole(user.role);
     user.status = normalizeUserStatus(user.status);
+    if (user.status === "rejected" && !user.rejectedAt) {
+      user.rejectedAt = user.requestedAt || Date.now();
+    }
     user.groupIds = user.groupIds || [];
     if (!user.activeSessionToken && savedUser && savedUser.activeSessionToken === session.token) {
       user.activeSessionToken = savedUser.activeSessionToken;
@@ -163,7 +171,7 @@ async function loadState() {
 
 function saveState() {
   const { remoteUsers, ...stateForSave } = state;
-  const persistedState = { ...stateForSave, currentUserId: null };
+  const persistedState = { ...stateForSave, currentUserId: null, users: pruneExpiredRejectedUsers(stateForSave.users || []) };
   localStorage.setItem(storeKey, JSON.stringify(persistedState));
   saveApiState(mergeWithRemoteState(persistedState));
 }
@@ -185,6 +193,16 @@ function mergeWithRemoteState(nextState) {
 
 function cloneState(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function isExpiredRejectedUser(user) {
+  if (normalizeUserStatus(user && user.status) !== "rejected") return false;
+  const rejectedAt = Number(user.rejectedAt || user.requestedAt || Date.now());
+  return Date.now() - rejectedAt >= rejectedUserRetentionMs;
+}
+
+function pruneExpiredRejectedUsers(users) {
+  return users.filter((user) => !isExpiredRejectedUser(user));
 }
 
 function currentSession() {
@@ -1717,6 +1735,7 @@ app.addEventListener("click", (event) => {
     const user = state.users.find((item) => item.id === button.dataset.rejectRegistration);
     if (!user) return;
     user.status = "rejected";
+    user.rejectedAt = Date.now();
     user.activeSessionToken = null;
     user.lastActivityAt = null;
     notify("Заявка отклонена.");
@@ -1778,6 +1797,7 @@ app.addEventListener("submit", (event) => {
         role: "QA",
         status: "pending",
         requestedAt: Date.now(),
+        rejectedAt: null,
         activeSessionToken: null,
         lastActivityAt: null,
         groupIds: [],
@@ -1930,6 +1950,7 @@ app.addEventListener("submit", (event) => {
       user.role = normalizeRole(formData.get("role"));
       user.status = normalizeUserStatus(formData.get("status"));
       user.password = formData.get("password");
+      user.rejectedAt = user.status === "rejected" ? user.rejectedAt || Date.now() : null;
       if (user.status !== "approved") {
         user.activeSessionToken = null;
         user.lastActivityAt = null;
@@ -1953,6 +1974,7 @@ app.addEventListener("submit", (event) => {
     if (!user) return;
     user.role = normalizeRole(formData.get("role"));
     user.status = "approved";
+    user.rejectedAt = null;
     user.groupIds = selectedValues(form.elements.groupIds);
     user.activeSessionToken = null;
     user.lastActivityAt = null;

@@ -2,6 +2,8 @@
 
 declare(strict_types=1);
 
+const REJECTED_USER_RETENTION_MS = 72 * 60 * 60 * 1000;
+
 header('Content-Type: application/json; charset=utf-8');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Headers: Content-Type');
@@ -63,6 +65,7 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
     if ($driver === 'sqlite') {
         addColumnIfMissing($pdo, 'sqlite', 'users', 'status', "TEXT NOT NULL DEFAULT 'approved'");
         addColumnIfMissing($pdo, 'sqlite', 'users', 'requested_at', 'INTEGER');
+        addColumnIfMissing($pdo, 'sqlite', 'users', 'rejected_at', 'INTEGER');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'active_session_token', 'TEXT');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'last_activity_at', 'INTEGER');
         $pdo->exec(
@@ -80,6 +83,7 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
 
     addColumnIfMissing($pdo, 'mysql', 'users', 'status', "VARCHAR(24) NOT NULL DEFAULT 'approved'");
     addColumnIfMissing($pdo, 'mysql', 'users', 'requested_at', 'BIGINT NULL');
+    addColumnIfMissing($pdo, 'mysql', 'users', 'rejected_at', 'BIGINT NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'active_session_token', 'VARCHAR(80) NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'last_activity_at', 'BIGINT NULL');
     $pdo->exec(
@@ -123,6 +127,8 @@ function respond(array $payload): void
 
 function loadState(PDO $pdo): array
 {
+    purgeExpiredRejectedUsers($pdo);
+
     $users = fetchUsers($pdo);
     $groups = fetchGroups($pdo);
     $cases = fetchCases($pdo);
@@ -139,7 +145,7 @@ function loadState(PDO $pdo): array
 
 function fetchUsers(PDO $pdo): array
 {
-    $users = $pdo->query('SELECT id, name, email, password_hash, role, status, requested_at, active_session_token, last_activity_at FROM users ORDER BY created_at, id')->fetchAll();
+    $users = $pdo->query('SELECT id, name, email, password_hash, role, status, requested_at, rejected_at, active_session_token, last_activity_at FROM users ORDER BY created_at, id')->fetchAll();
     $groupMap = fetchRelationMap($pdo, 'SELECT user_id AS item_id, group_id FROM user_groups');
 
     return array_map(fn ($user) => [
@@ -150,6 +156,7 @@ function fetchUsers(PDO $pdo): array
         'role' => $user['role'],
         'status' => $user['status'] ?? 'approved',
         'requestedAt' => $user['requested_at'] ? (int) $user['requested_at'] : null,
+        'rejectedAt' => $user['rejected_at'] ? (int) $user['rejected_at'] : null,
         'activeSessionToken' => $user['active_session_token'],
         'lastActivityAt' => $user['last_activity_at'] ? (int) $user['last_activity_at'] : null,
         'groupIds' => $groupMap[$user['id']] ?? [],
@@ -220,6 +227,38 @@ function fetchRelationMap(PDO $pdo, string $query): array
     return $map;
 }
 
+function rejectedUserCutoffMs(): int
+{
+    return (int) floor(microtime(true) * 1000) - REJECTED_USER_RETENTION_MS;
+}
+
+function purgeExpiredRejectedUsers(PDO $pdo): void
+{
+    $cutoff = rejectedUserCutoffMs();
+    $now = (int) floor(microtime(true) * 1000);
+    $stmt = $pdo->prepare(
+        "DELETE FROM users
+         WHERE status = 'rejected'
+           AND COALESCE(rejected_at, requested_at, ?) <= ?"
+    );
+    $stmt->execute([$now, $cutoff]);
+}
+
+function filterExpiredRejectedUsers(array $users): array
+{
+    $cutoff = rejectedUserCutoffMs();
+    $now = (int) floor(microtime(true) * 1000);
+
+    return array_values(array_filter($users, function (array $user) use ($cutoff, $now): bool {
+        if (($user['status'] ?? 'approved') !== 'rejected') {
+            return true;
+        }
+
+        $rejectedAt = (int) ($user['rejectedAt'] ?? $user['requestedAt'] ?? $now);
+        return $rejectedAt > $cutoff;
+    }));
+}
+
 function saveState(PDO $pdo, array $state): void
 {
     $state = normalizeStateReferences($state);
@@ -240,6 +279,7 @@ function saveState(PDO $pdo, array $state): void
 
 function normalizeStateReferences(array $state): array
 {
+    $state['users'] = filterExpiredRejectedUsers($state['users'] ?? []);
     $userIds = array_column($state['users'] ?? [], 'id');
     if (!isset($state['cases']) || !is_array($state['cases'])) {
         return $state;
@@ -277,7 +317,7 @@ function saveGroups(PDO $pdo, array $groups): void
 
 function saveUsers(PDO $pdo, array $users): void
 {
-    $stmt = $pdo->prepare('INSERT INTO users (id, name, email, password_hash, role, status, requested_at, active_session_token, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $stmt = $pdo->prepare('INSERT INTO users (id, name, email, password_hash, role, status, requested_at, rejected_at, active_session_token, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     $link = $pdo->prepare('INSERT INTO user_groups (user_id, group_id) VALUES (?, ?)');
 
     foreach ($users as $user) {
@@ -289,6 +329,7 @@ function saveUsers(PDO $pdo, array $users): void
             $user['role'] ?? 'Tester',
             $user['status'] ?? 'approved',
             $user['requestedAt'] ?? null,
+            $user['rejectedAt'] ?? null,
             $user['activeSessionToken'] ?? null,
             $user['lastActivityAt'] ?? null,
         ]);
