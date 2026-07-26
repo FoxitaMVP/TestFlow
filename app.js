@@ -654,6 +654,21 @@ function validateCaseForm(form, requireFirstStep = false) {
   return isValid;
 }
 
+function resetUiAfterLogin() {
+  view = "dashboard";
+  selectedGroupId = "all";
+  selectedCaseSuiteId = "all";
+  caseSearchQuery = "";
+  expandedCaseId = null;
+  editingSuiteGroupIds = [];
+  editingCaseId = null;
+  editingSuiteId = null;
+  userModalMode = null;
+  editingUserId = null;
+  groupModalMode = null;
+  editingGroupId = null;
+}
+
 function navButton(target, icon, label) {
   const active =
     view === target ||
@@ -1782,6 +1797,7 @@ app.addEventListener("submit", (event) => {
       authNotice = "";
       state.currentUserId = user.id;
       rememberSession(user);
+      resetUiAfterLogin();
     } else {
       if (state.users.some((item) => item.email.toLowerCase() === email)) {
         alert("Пользователь с таким email уже есть");
