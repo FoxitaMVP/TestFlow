@@ -114,6 +114,7 @@ let userModalMode = null;
 let editingUserId = null;
 let groupModalMode = null;
 let editingGroupId = null;
+let centerNoticeTimer = null;
 
 async function loadState() {
   const apiState = await loadApiState();
@@ -213,20 +214,38 @@ function clearSession() {
 }
 
 function isValidSession(session, user) {
+  return isValidSessionIdentity(session, user) && isSessionFresh(session);
+}
+
+function isValidSessionIdentity(session, user) {
   if (!session || !session.userId || !user) return false;
   if (normalizeUserStatus(user.status) !== "approved") return false;
   if (!session.token || user.activeSessionToken !== session.token) return false;
-  return Date.now() - Number(session.lastActivityAt || 0) <= sessionTimeoutMs;
+  return true;
+}
+
+function isSessionFresh(session) {
+  return Date.now() - Number(session && session.lastActivityAt ? session.lastActivityAt : 0) <= sessionTimeoutMs;
+}
+
+function endSession(notice = "") {
+  const user = currentUser();
+  if (user) {
+    user.activeSessionToken = null;
+    user.lastActivityAt = null;
+  }
+  state.currentUserId = null;
+  clearSession();
+  if (notice) authNotice = notice;
+  saveState();
+  renderAuth();
 }
 
 function touchSession() {
   const user = currentUser();
   const session = currentSession();
-  if (!isValidSession(session, user)) {
-    state.currentUserId = null;
-    clearSession();
-    authNotice = "Сессия завершена. Войдите снова.";
-    renderAuth();
+  if (!isValidSessionIdentity(session, user) || !isSessionFresh(session)) {
+    endSession("Сессия завершена. Войдите снова.");
     return false;
   }
 
@@ -246,11 +265,23 @@ async function checkRemoteSession() {
   if (!user) return;
 
   const session = currentSession();
+  if (!isValidSession(session, user)) {
+    endSession("Сессия завершена. Войдите снова.");
+    return;
+  }
+
   const apiState = await loadApiState();
+  const latestSession = currentSession();
+  if (state.currentUserId !== user.id || latestSession.token !== session.token) return;
+
   const remoteUser = apiState && apiState.users ? apiState.users.find((item) => item.id === user.id) : null;
-  if (!isValidSession(session, remoteUser)) {
+  if (!remoteUser) return;
+
+  state.remoteUsers = cloneState(apiState.users);
+  if (!isValidSessionIdentity(session, remoteUser)) {
     state.currentUserId = null;
     clearSession();
+    authNotice = "Сессия завершена. Войдите снова.";
     renderAuth();
   }
 }
@@ -505,6 +536,103 @@ function renderAppNotice() {
 
 function notify(text) {
   appNotice = text;
+}
+
+function showCenterNotice(text) {
+  const current = document.querySelector("[data-center-notice]");
+  if (current) current.remove();
+  if (centerNoticeTimer) clearTimeout(centerNoticeTimer);
+
+  const notice = document.createElement("div");
+  notice.className = "center-notice";
+  notice.dataset.centerNotice = "";
+  notice.setAttribute("role", "alert");
+  notice.textContent = text;
+  document.body.appendChild(notice);
+
+  centerNoticeTimer = setTimeout(() => {
+    notice.remove();
+    centerNoticeTimer = null;
+  }, 2800);
+}
+
+function clearFormValidation(form) {
+  form.querySelectorAll(".field-invalid").forEach((field) => field.classList.remove("field-invalid"));
+}
+
+function markInvalidField(field) {
+  if (!field) return;
+  field.classList.add("field-invalid");
+}
+
+function stepRowValue(row, selector) {
+  const field = row.querySelector(selector);
+  return field ? field.value.trim() : "";
+}
+
+function validateNewStepRows(form, requireFirstRow = false) {
+  const rows = Array.from(form.querySelectorAll("[data-new-step-row]"));
+  let isValid = true;
+
+  rows.forEach((row, index) => {
+    const requiredFields = [
+      row.querySelector('[name="stepPrecondition"]'),
+      row.querySelector('[name="stepAction"]'),
+      row.querySelector('[name="stepExpected"]'),
+      row.querySelector('[name="stepActual"]'),
+    ];
+    const hasAnyText =
+      requiredFields.some((field) => field && field.value.trim()) ||
+      Boolean(stepRowValue(row, '[name="stepComment"]'));
+    const shouldValidate = hasAnyText || (requireFirstRow && index === 0);
+
+    if (!shouldValidate) return;
+
+    requiredFields.forEach((field) => {
+      if (!field || field.value.trim()) return;
+      markInvalidField(field);
+      isValid = false;
+    });
+  });
+
+  return isValid;
+}
+
+function validateEditableStepRows(form) {
+  const requiredFields = Array.from(
+    form.querySelectorAll('[data-step-field$=":precondition"], [data-step-field$=":action"], [data-step-field$=":expected"], [data-step-field$=":actual"]'),
+  );
+  let isValid = true;
+
+  requiredFields.forEach((field) => {
+    if (field.value.trim()) return;
+    markInvalidField(field);
+    isValid = false;
+  });
+
+  return isValid;
+}
+
+function validateCaseForm(form, requireFirstStep = false) {
+  clearFormValidation(form);
+
+  let isValid = true;
+  const title = form.elements.title;
+  if (title && !title.value.trim()) {
+    markInvalidField(title);
+    isValid = false;
+  }
+
+  if (!validateNewStepRows(form, requireFirstStep)) isValid = false;
+  if (form.dataset.form === "edit-case" && !validateEditableStepRows(form)) isValid = false;
+
+  if (!isValid) {
+    showCenterNotice("Заполните обязательные поля");
+    const firstInvalid = form.querySelector(".field-invalid");
+    if (firstInvalid) firstInvalid.focus({ preventScroll: true });
+  }
+
+  return isValid;
 }
 
 function navButton(target, icon, label) {
@@ -809,7 +937,7 @@ function collectStepRows(form) {
         status: row.querySelector('[name="stepStatus"]').value,
       }),
     )
-    .filter((step) => step.precondition || step.action || step.expected || step.actual || step.comment);
+    .filter((step) => step.precondition || step.action || step.expected || step.actual);
 }
 
 function findStep(caseId, stepId) {
@@ -1608,9 +1736,10 @@ app.addEventListener("submit", (event) => {
 
   if (form.dataset.form === "case") {
     if (!canCreateCases()) return;
+    if (!validateCaseForm(form, true)) return;
     const suiteIds = selectedValues(form.elements.suiteIds);
     if (!canManageCases() && !suiteIds.length) {
-      alert("Выберите сьют из своей группы");
+      showCenterNotice("Заполните обязательные поля");
       return;
     }
     const newCase = {
@@ -1650,6 +1779,7 @@ app.addEventListener("submit", (event) => {
     const testCase = state.cases.find((item) => item.id === editingCaseId);
     if (!testCase) return;
     if (!canEditCase(testCase)) return;
+    if (!validateCaseForm(form, false)) return;
 
     const suiteIds = selectedValues(form.elements.suiteIds);
     testCase.title = formData.get("title").trim();

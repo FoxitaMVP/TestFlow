@@ -1,2 +1,4 @@
 api/config.php
 database/*.db
+.DS_Store
+__MACOSX/

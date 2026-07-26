@@ -139,6 +139,23 @@ button {
   font-weight: 800;
 }
 
+.center-notice {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 40;
+  width: min(360px, calc(100vw - 32px));
+  padding: 16px 18px;
+  border: 1px solid #f3b8c0;
+  border-radius: 8px;
+  background: #fff4f5;
+  color: var(--danger);
+  box-shadow: var(--shadow);
+  font-weight: 900;
+  text-align: center;
+  transform: translate(-50%, -50%);
+}
+
 label {
   display: grid;
   gap: 7px;
@@ -170,6 +187,11 @@ select:focus,
 textarea:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(15, 139, 141, 0.14);
+}
+
+.field-invalid {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgba(207, 63, 79, 0.14);
 }
 
 .password-field {
