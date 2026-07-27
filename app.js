@@ -654,7 +654,7 @@ function validateCaseForm(form, requireFirstStep = false) {
   return isValid;
 }
 
-function resetUiAfterLogin() {
+function resetUiState() {
   view = "dashboard";
   selectedGroupId = "all";
   selectedCaseSuiteId = "all";
@@ -667,6 +667,10 @@ function resetUiAfterLogin() {
   editingUserId = null;
   groupModalMode = null;
   editingGroupId = null;
+}
+
+function resetUiAfterLogin() {
+  resetUiState();
 }
 
 function navButton(target, icon, label) {
@@ -1664,6 +1668,7 @@ app.addEventListener("click", (event) => {
     }
     state.currentUserId = null;
     clearSession();
+    resetUiState();
     saveState();
     renderAuth();
   }
