@@ -9,6 +9,8 @@ CREATE TABLE users (
   status TEXT NOT NULL DEFAULT 'approved',
   requested_at INTEGER,
   rejected_at INTEGER,
+  teams_url TEXT,
+  telegram_url TEXT,
   active_session_token TEXT,
   last_activity_at INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -8,8 +8,8 @@ const rejectedUserRetentionMs = 72 * 60 * 60 * 1000;
 const seedState = {
   currentUserId: null,
   users: [
-    { id: "u1", name: "Администратор", email: "admin@test.local", password: "admin123", role: "Admin", status: "approved", groupIds: ["g1"] },
-    { id: "u2", name: "Анна QA", email: "anna@test.local", password: "test123", role: "QA", status: "approved", groupIds: ["g2"] },
+    { id: "u1", name: "Администратор", email: "admin@test.local", password: "admin123", role: "Admin", status: "approved", teamsUrl: "", telegramUrl: "", groupIds: ["g1"] },
+    { id: "u2", name: "Анна QA", email: "anna@test.local", password: "test123", role: "QA", status: "approved", teamsUrl: "", telegramUrl: "", groupIds: ["g2"] },
   ],
   groups: [
     { id: "g1", name: "Regression", description: "Критичные проверки перед релизом" },
@@ -146,6 +146,8 @@ async function loadState() {
     }
     user.role = normalizeRole(user.role);
     user.status = normalizeUserStatus(user.status);
+    user.teamsUrl = user.teamsUrl || "";
+    user.telegramUrl = user.telegramUrl || "";
     if (user.status === "rejected" && !user.rejectedAt) {
       user.rejectedAt = user.requestedAt || Date.now();
     }
@@ -425,6 +427,7 @@ function canAssignQa(user = currentUser()) {
 
 function canOpenView(target, user = currentUser()) {
   if (!user) return false;
+  if (target === "profile") return true;
   if (isAdmin(user)) return true;
   if (isManager(user)) return true;
   if (normalizeRole(user.role) === "QA") return ["dashboard", "cases", "create-case", "edit-case"].includes(target);
@@ -534,10 +537,10 @@ function render() {
           ${isAdmin() ? navButton("registration-requests", "◍", `Заявки${pendingUsers().length ? ` (${pendingUsers().length})` : ""}`) : ""}
         </nav>
         <div class="sidebar-user">
-          <div>
+          <button class="sidebar-profile ${view === "profile" ? "active" : ""}" data-view="profile">
             <strong>${escapeHtml(currentUser().name)}</strong>
             <div class="muted">${escapeHtml(roleLabel(currentUser().role))}</div>
-          </div>
+          </button>
           <button class="secondary" data-action="logout">Выйти</button>
         </div>
       </aside>
@@ -710,6 +713,7 @@ function renderView() {
     groups: renderGroups,
     users: renderUsers,
     "registration-requests": renderRegistrationRequests,
+    profile: renderProfile,
   };
   return views[view]();
 }
@@ -744,6 +748,37 @@ function renderDashboard() {
       <div class="case-list">${recentCases || empty("Кейсов пока нет")}</div>
     </section>
   `;
+}
+
+function renderProfile() {
+  const user = currentUser();
+  return `
+    ${topbar("Профиль", "Мой профиль", "Пароль и контактные ссылки для связи в Teams и Telegram.")}
+    <section class="panel form-page">
+      <form class="form-stack" data-form="profile">
+        <div class="detail-list">
+          <div><span class="muted">Имя</span><strong>${escapeHtml(user.name)}</strong></div>
+          <div><span class="muted">Email</span><strong>${escapeHtml(user.email)}</strong></div>
+          <div><span class="muted">Роль</span><strong>${escapeHtml(roleLabel(user.role))}</strong></div>
+        </div>
+        <label>Пароль<input name="password" type="password" required placeholder="Минимум 4 символа" value="${escapeHtml(user.password)}" /></label>
+        <label>Teams<input name="teamsUrl" type="url" placeholder="https://teams.microsoft.com/..." value="${escapeHtml(user.teamsUrl)}" /></label>
+        <label>Telegram<input name="telegramUrl" type="url" placeholder="https://t.me/username" value="${escapeHtml(user.telegramUrl)}" /></label>
+        <div class="profile-links">
+          ${profileLink("Teams", user.teamsUrl)}
+          ${profileLink("Telegram", user.telegramUrl)}
+        </div>
+        <div class="toolbar">
+          <button class="primary">Сохранить профиль</button>
+        </div>
+      </form>
+    </section>
+  `;
+}
+
+function profileLink(label, url) {
+  if (!url) return `<span class="badge">${label}: не указан</span>`;
+  return `<a class="badge" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${label}</a>`;
 }
 
 function stat(label, value) {
@@ -1819,6 +1854,8 @@ app.addEventListener("submit", (event) => {
         status: "pending",
         requestedAt: Date.now(),
         rejectedAt: null,
+        teamsUrl: "",
+        telegramUrl: "",
         activeSessionToken: null,
         lastActivityAt: null,
         groupIds: [],
@@ -1946,6 +1983,8 @@ app.addEventListener("submit", (event) => {
       role: normalizeRole(formData.get("role")),
       status: "approved",
       password: formData.get("password"),
+      teamsUrl: "",
+      telegramUrl: "",
       groupIds: selectedValues(form.elements.groupIds),
     });
     userModalMode = null;
@@ -1986,6 +2025,17 @@ app.addEventListener("submit", (event) => {
     userModalMode = null;
     editingUserId = null;
     notify("Пользователь сохранён.");
+    render();
+  }
+
+  if (form.dataset.form === "profile") {
+    const user = currentUser();
+    if (!user) return;
+    user.password = formData.get("password");
+    user.teamsUrl = formData.get("teamsUrl").trim();
+    user.telegramUrl = formData.get("telegramUrl").trim();
+    notify("Профиль сохранён.");
+    saveState();
     render();
   }
 
