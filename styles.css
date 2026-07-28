@@ -582,6 +582,16 @@ h3 {
   font-weight: 800;
 }
 
+.badge-button {
+  border: 0;
+  cursor: pointer;
+}
+
+.badge-button:hover {
+  background: var(--panel-soft);
+  color: var(--accent-dark);
+}
+
 a.badge {
   text-decoration: none;
 }

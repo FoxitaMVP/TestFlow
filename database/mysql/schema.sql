@@ -7,7 +7,7 @@ CREATE TABLE users (
   status VARCHAR(24) NOT NULL DEFAULT 'approved',
   requested_at BIGINT NULL,
   rejected_at BIGINT NULL,
-  teams_url VARCHAR(500) NULL,
+  teams_email VARCHAR(190) NULL,
   telegram_url VARCHAR(500) NULL,
   active_session_token VARCHAR(80) NULL,
   last_activity_at BIGINT NULL,

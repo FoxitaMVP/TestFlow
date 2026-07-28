@@ -66,7 +66,7 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
         addColumnIfMissing($pdo, 'sqlite', 'users', 'status', "TEXT NOT NULL DEFAULT 'approved'");
         addColumnIfMissing($pdo, 'sqlite', 'users', 'requested_at', 'INTEGER');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'rejected_at', 'INTEGER');
-        addColumnIfMissing($pdo, 'sqlite', 'users', 'teams_url', 'TEXT');
+        addColumnIfMissing($pdo, 'sqlite', 'users', 'teams_email', 'TEXT');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'telegram_url', 'TEXT');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'active_session_token', 'TEXT');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'last_activity_at', 'INTEGER');
@@ -86,7 +86,7 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
     addColumnIfMissing($pdo, 'mysql', 'users', 'status', "VARCHAR(24) NOT NULL DEFAULT 'approved'");
     addColumnIfMissing($pdo, 'mysql', 'users', 'requested_at', 'BIGINT NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'rejected_at', 'BIGINT NULL');
-    addColumnIfMissing($pdo, 'mysql', 'users', 'teams_url', 'VARCHAR(500) NULL');
+    addColumnIfMissing($pdo, 'mysql', 'users', 'teams_email', 'VARCHAR(190) NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'telegram_url', 'VARCHAR(500) NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'active_session_token', 'VARCHAR(80) NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'last_activity_at', 'BIGINT NULL');
@@ -149,7 +149,7 @@ function loadState(PDO $pdo): array
 
 function fetchUsers(PDO $pdo): array
 {
-    $users = $pdo->query('SELECT id, name, email, password_hash, role, status, requested_at, rejected_at, teams_url, telegram_url, active_session_token, last_activity_at FROM users ORDER BY created_at, id')->fetchAll();
+    $users = $pdo->query('SELECT id, name, email, password_hash, role, status, requested_at, rejected_at, teams_email, telegram_url, active_session_token, last_activity_at FROM users ORDER BY created_at, id')->fetchAll();
     $groupMap = fetchRelationMap($pdo, 'SELECT user_id AS item_id, group_id FROM user_groups');
 
     return array_map(fn ($user) => [
@@ -161,7 +161,7 @@ function fetchUsers(PDO $pdo): array
         'status' => $user['status'] ?? 'approved',
         'requestedAt' => $user['requested_at'] ? (int) $user['requested_at'] : null,
         'rejectedAt' => $user['rejected_at'] ? (int) $user['rejected_at'] : null,
-        'teamsUrl' => $user['teams_url'] ?? '',
+        'teamsEmail' => $user['teams_email'] ?? '',
         'telegramUrl' => $user['telegram_url'] ?? '',
         'activeSessionToken' => $user['active_session_token'],
         'lastActivityAt' => $user['last_activity_at'] ? (int) $user['last_activity_at'] : null,
@@ -323,7 +323,7 @@ function saveGroups(PDO $pdo, array $groups): void
 
 function saveUsers(PDO $pdo, array $users): void
 {
-    $stmt = $pdo->prepare('INSERT INTO users (id, name, email, password_hash, role, status, requested_at, rejected_at, teams_url, telegram_url, active_session_token, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $stmt = $pdo->prepare('INSERT INTO users (id, name, email, password_hash, role, status, requested_at, rejected_at, teams_email, telegram_url, active_session_token, last_activity_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
     $link = $pdo->prepare('INSERT INTO user_groups (user_id, group_id) VALUES (?, ?)');
 
     foreach ($users as $user) {
@@ -336,7 +336,7 @@ function saveUsers(PDO $pdo, array $users): void
             $user['status'] ?? 'approved',
             $user['requestedAt'] ?? null,
             $user['rejectedAt'] ?? null,
-            $user['teamsUrl'] ?? null,
+            $user['teamsEmail'] ?? null,
             $user['telegramUrl'] ?? null,
             $user['activeSessionToken'] ?? null,
             $user['lastActivityAt'] ?? null,

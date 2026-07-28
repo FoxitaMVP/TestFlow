@@ -8,8 +8,8 @@ const rejectedUserRetentionMs = 72 * 60 * 60 * 1000;
 const seedState = {
   currentUserId: null,
   users: [
-    { id: "u1", name: "Администратор", email: "admin@test.local", password: "admin123", role: "Admin", status: "approved", teamsUrl: "", telegramUrl: "", groupIds: ["g1"] },
-    { id: "u2", name: "Анна QA", email: "anna@test.local", password: "test123", role: "QA", status: "approved", teamsUrl: "", telegramUrl: "", groupIds: ["g2"] },
+    { id: "u1", name: "Администратор", email: "admin@test.local", password: "admin123", role: "Admin", status: "approved", teamsEmail: "", telegramUrl: "", groupIds: ["g1"] },
+    { id: "u2", name: "Анна QA", email: "anna@test.local", password: "test123", role: "QA", status: "approved", teamsEmail: "", telegramUrl: "", groupIds: ["g2"] },
   ],
   groups: [
     { id: "g1", name: "Regression", description: "Критичные проверки перед релизом" },
@@ -117,6 +117,7 @@ let editingUserId = null;
 let groupModalMode = null;
 let editingGroupId = null;
 let centerNoticeTimer = null;
+let ownerContactUserId = null;
 
 async function loadState() {
   const apiState = await loadApiState();
@@ -146,7 +147,7 @@ async function loadState() {
     }
     user.role = normalizeRole(user.role);
     user.status = normalizeUserStatus(user.status);
-    user.teamsUrl = user.teamsUrl || "";
+    user.teamsEmail = user.teamsEmail || user.teamsUrl || "";
     user.telegramUrl = user.telegramUrl || "";
     if (user.status === "rejected" && !user.rejectedAt) {
       user.rejectedAt = user.requestedAt || Date.now();
@@ -544,7 +545,7 @@ function render() {
           <button class="secondary" data-action="logout">Выйти</button>
         </div>
       </aside>
-      <section class="content">${renderAppNotice()}${renderView()}</section>
+      <section class="content">${renderAppNotice()}${renderView()}${renderOwnerContactModal()}</section>
     </section>
   `;
 }
@@ -670,6 +671,7 @@ function resetUiState() {
   editingUserId = null;
   groupModalMode = null;
   editingGroupId = null;
+  ownerContactUserId = null;
 }
 
 function resetUiAfterLogin() {
@@ -753,7 +755,7 @@ function renderDashboard() {
 function renderProfile() {
   const user = currentUser();
   return `
-    ${topbar("Профиль", "Мой профиль", "Пароль и контактные ссылки для связи в Teams и Telegram.")}
+    ${topbar("Профиль", "Мой профиль", "Пароль, email для поиска в Teams и ссылка на Telegram.")}
     <section class="panel form-page">
       <form class="form-stack" data-form="profile">
         <div class="detail-list">
@@ -762,10 +764,10 @@ function renderProfile() {
           <div><span class="muted">Роль</span><strong>${escapeHtml(roleLabel(user.role))}</strong></div>
         </div>
         <label>Пароль<input name="password" type="password" required placeholder="Минимум 4 символа" value="${escapeHtml(user.password)}" /></label>
-        <label>Teams<input name="teamsUrl" type="url" placeholder="https://teams.microsoft.com/..." value="${escapeHtml(user.teamsUrl)}" /></label>
+        <label>Teams email<input name="teamsEmail" type="email" placeholder="name@company.com" value="${escapeHtml(user.teamsEmail)}" /></label>
         <label>Telegram<input name="telegramUrl" type="url" placeholder="https://t.me/username" value="${escapeHtml(user.telegramUrl)}" /></label>
         <div class="profile-links">
-          ${profileLink("Teams", user.teamsUrl)}
+          ${profileContact("Teams", user.teamsEmail)}
           ${profileLink("Telegram", user.telegramUrl)}
         </div>
         <div class="toolbar">
@@ -779,6 +781,10 @@ function renderProfile() {
 function profileLink(label, url) {
   if (!url) return `<span class="badge">${label}: не указан</span>`;
   return `<a class="badge" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${label}</a>`;
+}
+
+function profileContact(label, value) {
+  return `<span class="badge">${label}: ${value ? escapeHtml(value) : "не указан"}</span>`;
 }
 
 function stat(label, value) {
@@ -880,8 +886,7 @@ function renderCaseCard(testCase) {
       <div class="badge-row">
         ${suiteBadges(testCase.id)}
         ${groupBadges(testCase.groupIds)}
-        <span class="badge">${ownerName(testCase.ownerId)}</span>
-        ${assignedQaBadges(testCase.assignedUserIds)}
+        ${responsibleBadges(testCase)}
         <span class="badge success">${progress.passPercent}% успешно</span>
         <span class="badge danger">${progress.failPercent}% не успешно</span>
       </div>
@@ -925,7 +930,7 @@ function renderEditCase() {
   return `
     ${topbar(
       "Редактирование",
-      escapeHtml(testCase.title),
+      "Редактирование кейса",
       "Здесь можно редактировать, удалять и добавлять строки проверки, а также менять сьюты кейса.",
       `<button class="secondary" data-view="cases">Назад к кейсам</button>${canDeleteCase() ? `<button class="danger" data-delete-case="${testCase.id}">Удалить кейс</button>` : ""}`,
     )}
@@ -1407,9 +1412,14 @@ function renderUserStatusOptions(selected = "approved") {
   return statuses.map(([value, label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
 }
 
-function renderOwnerOptions(selected = currentUser().id) {
+function defaultOwnerId() {
+  return canManageCases() ? "" : currentUser().id;
+}
+
+function renderOwnerOptions(selected = defaultOwnerId()) {
   const users = canManageCases() ? state.users : [currentUser()];
-  return users.map((user) => `<option value="${user.id}" ${user.id === selected ? "selected" : ""}>${escapeHtml(user.name)}</option>`).join("");
+  const emptyOption = canManageCases() ? `<option value="" ${selected ? "" : "selected"}>Без ответственного</option>` : "";
+  return `${emptyOption}${users.map((user) => `<option value="${user.id}" ${user.id === selected ? "selected" : ""}>${escapeHtml(user.name)}</option>`).join("")}`;
 }
 
 function renderGroupOptions(selected = []) {
@@ -1471,6 +1481,7 @@ function filterCasesBySearch(items) {
 
 function caseSearchText(testCase) {
   const owner = state.users.find((user) => user.id === testCase.ownerId);
+  const responsibleOwner = owner && normalizeRole(owner.role) === "QA" ? owner : null;
   const assignedUsers = (testCase.assignedUserIds || [])
     .map((userId) => state.users.find((user) => user.id === userId))
     .filter(Boolean);
@@ -1490,7 +1501,7 @@ function caseSearchText(testCase) {
   return [
     testCase.title,
     testCase.description,
-    owner && owner.name,
+    responsibleOwner && responsibleOwner.name,
     ...assignedUsers.map((user) => user.name),
     ...groups.flatMap((group) => [group.name, group.description]),
     ...suites.flatMap((suite) => [suite.title, suite.description]),
@@ -1577,6 +1588,50 @@ function ownerName(ownerId) {
   return owner ? owner.name : "Без владельца";
 }
 
+function ownerBadge(ownerId) {
+  const owner = state.users.find((user) => user.id === ownerId);
+  if (!owner) return `<span class="badge">Без владельца</span>`;
+  return `<button class="badge badge-button" type="button" data-owner-contact="${owner.id}">${escapeHtml(owner.name)}</button>`;
+}
+
+function responsibleBadges(testCase) {
+  const owner = state.users.find((user) => user.id === testCase.ownerId);
+  const ownerIds = owner && normalizeRole(owner.role) === "QA" ? [owner.id] : [];
+  const userIds = Array.from(new Set([...ownerIds, ...(testCase.assignedUserIds || [])].filter(Boolean)));
+  const users = userIds.map((userId) => state.users.find((user) => user.id === userId)).filter(Boolean);
+  if (!users.length) return `<span class="badge">Ответственные не назначены</span>`;
+
+  const visibleUsers = users.slice(0, 3);
+  const extraCount = users.length - visibleUsers.length;
+  return `
+    ${visibleUsers.map((user) => ownerBadge(user.id)).join("")}
+    ${extraCount > 0 ? `<span class="badge">+${extraCount}</span>` : ""}
+  `;
+}
+
+function renderOwnerContactModal() {
+  if (!ownerContactUserId) return "";
+  const user = state.users.find((item) => item.id === ownerContactUserId);
+  if (!user) return "";
+
+  return `
+    <div class="modal-backdrop" data-close-owner-contact>
+      <section class="modal-panel" role="dialog" aria-modal="true">
+        <div class="panel-title">
+          <h2>${escapeHtml(user.name)}</h2>
+          <button class="secondary" data-close-owner-contact type="button">Закрыть</button>
+        </div>
+        <div class="detail-list">
+          <div><span class="muted">Роль</span><strong>${escapeHtml(roleLabel(user.role))}</strong></div>
+          <div><span class="muted">Email</span><strong>${escapeHtml(user.email)}</strong></div>
+          <div><span class="muted">Teams</span><strong>${escapeHtml(user.teamsEmail || "Не указан")}</strong></div>
+          <div><span class="muted">Telegram</span><strong>${user.telegramUrl ? `<a href="${escapeHtml(user.telegramUrl)}" target="_blank" rel="noreferrer">${escapeHtml(user.telegramUrl)}</a>` : "Не указан"}</strong></div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function empty(text) {
   return `<div class="empty">${text}</div>`;
 }
@@ -1594,6 +1649,12 @@ function selectedValues(select) {
 }
 
 app.addEventListener("click", (event) => {
+  if (event.target.dataset && event.target.dataset.closeOwnerContact !== undefined) {
+    ownerContactUserId = null;
+    render();
+    return;
+  }
+
   if (event.target.dataset && event.target.dataset.closeGroupModal !== undefined) {
     groupModalMode = null;
     editingGroupId = null;
@@ -1619,6 +1680,14 @@ app.addEventListener("click", (event) => {
     editingUserId = null;
     groupModalMode = null;
     editingGroupId = null;
+    ownerContactUserId = null;
+    render();
+  }
+
+  if (button.dataset.ownerContact) {
+    const user = state.users.find((item) => item.id === button.dataset.ownerContact);
+    if (!user) return;
+    ownerContactUserId = user.id;
     render();
   }
 
@@ -1854,7 +1923,7 @@ app.addEventListener("submit", (event) => {
         status: "pending",
         requestedAt: Date.now(),
         rejectedAt: null,
-        teamsUrl: "",
+        teamsEmail: "",
         telegramUrl: "",
         activeSessionToken: null,
         lastActivityAt: null,
@@ -1879,11 +1948,12 @@ app.addEventListener("submit", (event) => {
       showCenterNotice("Заполните обязательные поля");
       return;
     }
+    const ownerId = canManageCases() ? formData.get("ownerId") || null : currentUser().id;
     const newCase = {
       id: id("c"),
       title: formData.get("title").trim(),
       description: formData.get("description").trim(),
-      ownerId: canManageCases() ? formData.get("ownerId") : currentUser().id,
+      ownerId,
       assignedUserIds: canAssignQa() ? selectedValues(form.elements.assignedUserIds) : [currentUser().id],
       groupIds: groupIdsFromSuites(suiteIds),
       steps: collectStepRows(form),
@@ -1983,7 +2053,7 @@ app.addEventListener("submit", (event) => {
       role: normalizeRole(formData.get("role")),
       status: "approved",
       password: formData.get("password"),
-      teamsUrl: "",
+      teamsEmail: "",
       telegramUrl: "",
       groupIds: selectedValues(form.elements.groupIds),
     });
@@ -2032,7 +2102,7 @@ app.addEventListener("submit", (event) => {
     const user = currentUser();
     if (!user) return;
     user.password = formData.get("password");
-    user.teamsUrl = formData.get("teamsUrl").trim();
+    user.teamsEmail = formData.get("teamsEmail").trim();
     user.telegramUrl = formData.get("telegramUrl").trim();
     notify("Профиль сохранён.");
     saveState();
