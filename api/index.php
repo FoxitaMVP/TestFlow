@@ -265,6 +265,16 @@ function filterExpiredRejectedUsers(array $users): array
     }));
 }
 
+function normalizePasswordHash(?string $password): string
+{
+    $password = $password ?? '';
+    if (preg_match('/^[a-f0-9]{64}$/i', $password) === 1) {
+        return strtolower($password);
+    }
+
+    return hash('sha256', $password);
+}
+
 function saveState(PDO $pdo, array $state): void
 {
     $state = normalizeStateReferences($state);
@@ -331,7 +341,7 @@ function saveUsers(PDO $pdo, array $users): void
             $user['id'],
             $user['name'],
             $user['email'],
-            $user['password'] ?? '',
+            normalizePasswordHash($user['password'] ?? ''),
             $user['role'] ?? 'Tester',
             $user['status'] ?? 'approved',
             $user['requestedAt'] ?? null,

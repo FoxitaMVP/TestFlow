@@ -7,94 +7,10 @@ const rejectedUserRetentionMs = 72 * 60 * 60 * 1000;
 
 const seedState = {
   currentUserId: null,
-  users: [
-    { id: "u1", name: "Администратор", email: "admin@test.local", password: "admin123", role: "Admin", status: "approved", teamsEmail: "", telegramUrl: "", groupIds: ["g1"] },
-    { id: "u2", name: "Анна QA", email: "anna@test.local", password: "test123", role: "QA", status: "approved", teamsEmail: "", telegramUrl: "", groupIds: ["g2"] },
-  ],
-  groups: [
-    { id: "g1", name: "Regression", description: "Критичные проверки перед релизом" },
-    { id: "g2", name: "Mobile", description: "Проверки мобильного клиента" },
-  ],
-  cases: [
-    {
-      id: "c1",
-      title: "Авторизация по email",
-      description: "Проверка входа зарегистрированного пользователя.",
-      ownerId: "u1",
-      assignedUserIds: ["u2"],
-      groupIds: ["g1"],
-      steps: [
-        {
-          id: "s1",
-          precondition: "Пользователь зарегистрирован",
-          action: "Открыть форму входа",
-          expected: "Форма входа отображается",
-          actual: "Форма открылась",
-          comment: "",
-          status: "passed",
-        },
-        {
-          id: "s2",
-          precondition: "Форма входа открыта",
-          action: "Ввести email и пароль",
-          expected: "Данные принимаются без ошибок",
-          actual: "Поля заполнены",
-          comment: "",
-          status: "passed",
-        },
-        {
-          id: "s3",
-          precondition: "Данные введены",
-          action: "Проверить переход в кабинет",
-          expected: "Открывается кабинет пользователя",
-          actual: "Кабинет открыт",
-          comment: "",
-          status: "passed",
-        },
-      ],
-    },
-    {
-      id: "c2",
-      title: "Восстановление пароля",
-      description: "Пользователь получает ссылку восстановления.",
-      ownerId: "u2",
-      assignedUserIds: ["u2"],
-      groupIds: ["g1", "g2"],
-      steps: [
-        {
-          id: "s4",
-          precondition: "Пользователь не авторизован",
-          action: "Открыть страницу восстановления",
-          expected: "Страница восстановления доступна",
-          actual: "Страница открылась",
-          comment: "",
-          status: "passed",
-        },
-        {
-          id: "s5",
-          precondition: "Email зарегистрирован",
-          action: "Отправить email",
-          expected: "Письмо восстановления отправлено",
-          actual: "Появилась ошибка отправки",
-          comment: "Проверить почтовый сервис",
-          status: "failed",
-        },
-        {
-          id: "s6",
-          precondition: "Письмо отправлено",
-          action: "Проверить письмо",
-          expected: "Письмо содержит рабочую ссылку",
-          actual: "",
-          comment: "",
-          status: "untested",
-        },
-      ],
-    },
-  ],
-  suites: [
-    { id: "q1", title: "Smoke Web", description: "Быстрый набор проверок веб-приложения", groupIds: ["g1"], caseIds: ["c1", "c2"] },
-    { id: "q2", title: "Mobile Login", description: "Логин и восстановление на мобильных устройствах", groupIds: ["g2"], caseIds: ["c2"] },
-  ],
+  users: [],
+  groups: [],
+  cases: [],
+  suites: [],
 };
 
 let state = cloneState(seedState);
@@ -119,20 +35,20 @@ let groupModalMode = null;
 let editingGroupId = null;
 let centerNoticeTimer = null;
 let ownerContactUserId = null;
+let passwordsMigratedOnLoad = false;
 
 async function loadState() {
   const apiState = await loadApiState();
   const saved = localStorage.getItem(storeKey);
   const savedState = saved ? JSON.parse(saved) : null;
-  const loadedState = apiState || savedState || cloneState(seedState);
+  const loadedState = apiState || { ...(savedState || cloneState(seedState)), users: [] };
   const session = currentSession();
-  if (!loadedState.users || !loadedState.users.length) {
-    return cloneState(seedState);
-  }
+  loadedState.users = loadedState.users || [];
   loadedState.groups = loadedState.groups || [];
   loadedState.cases = loadedState.cases || [];
   loadedState.suites = loadedState.suites || [];
   loadedState.users = pruneExpiredRejectedUsers(loadedState.users);
+  passwordsMigratedOnLoad = await normalizeUserPasswords(loadedState.users);
   loadedState.users.forEach((user) => {
     const savedUser = savedState && savedState.users ? savedState.users.find((item) => item.id === user.id) : null;
     if (savedUser) {
@@ -176,7 +92,8 @@ async function loadState() {
 function saveState() {
   const { remoteUsers, ...stateForSave } = state;
   const persistedState = { ...stateForSave, currentUserId: null, users: pruneExpiredRejectedUsers(stateForSave.users || []) };
-  localStorage.setItem(storeKey, JSON.stringify(persistedState));
+  const localState = { ...persistedState, users: [] };
+  localStorage.setItem(storeKey, JSON.stringify(localState));
   saveApiState(mergeWithRemoteState(persistedState));
 }
 
@@ -475,6 +392,33 @@ function escapeHtml(value = "") {
     .replace(/'/g, "&#039;");
 }
 
+function isPasswordHash(value = "") {
+  return /^[a-f0-9]{64}$/i.test(String(value));
+}
+
+async function hashPassword(password = "") {
+  const input = new TextEncoder().encode(String(password));
+  const digest = await crypto.subtle.digest("SHA-256", input);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+async function normalizeUserPasswords(users = []) {
+  let changed = false;
+  for (const user of users) {
+    if (!user.password) continue;
+    if (isPasswordHash(user.password)) continue;
+    user.password = await hashPassword(user.password);
+    changed = true;
+  }
+  return changed;
+}
+
+async function passwordMatches(user, password) {
+  return Boolean(user && user.password && user.password === await hashPassword(password));
+}
+
 function normalizeStep(step) {
   return {
     id: step.id || id("s"),
@@ -766,7 +710,7 @@ function renderProfile() {
           <div><span class="muted">Email</span><strong>${escapeHtml(user.email)}</strong></div>
           <div><span class="muted">Роль</span><strong>${escapeHtml(roleLabel(user.role))}</strong></div>
         </div>
-        <label>Пароль<input name="password" type="password" required placeholder="Минимум 4 символа" value="${escapeHtml(user.password)}" /></label>
+        <label>Новый пароль<input name="password" type="password" placeholder="Оставьте пустым, чтобы не менять" /></label>
         <label>Teams email<input name="teamsEmail" type="email" placeholder="name@company.com" value="${escapeHtml(user.teamsEmail)}" /></label>
         <label>Telegram<input name="telegramUrl" type="url" placeholder="https://t.me/username" value="${escapeHtml(user.telegramUrl)}" /></label>
         <div class="profile-links">
@@ -1363,7 +1307,7 @@ function renderUserModal() {
           ${editableUser ? `<label>Email<input name="email" type="email" required placeholder="name@company.com" value="${isCreate ? "" : escapeHtml(user.email)}" /></label>` : ""}
           ${editableUser ? `<label>Роль<select name="role" required>${renderRoleOptions(isCreate ? "QA" : user.role)}</select></label>` : ""}
           ${editableUser && !isCreate ? `<label>Статус<select name="status">${renderUserStatusOptions(user.status)}</select></label>` : ""}
-          ${editableUser ? `<label>Пароль<input name="password" type="password" required placeholder="Минимум 4 символа" value="${isCreate ? "" : escapeHtml(user.password)}" /></label>` : ""}
+          ${editableUser ? `<label>${isCreate ? "Пароль" : "Новый пароль"}<input name="password" type="password" ${isCreate ? "required" : ""} placeholder="${isCreate ? "Минимум 4 символа" : "Оставьте пустым, чтобы не менять"}" value="" /></label>` : ""}
           ${editableGroups ? `<label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions(isCreate ? [] : user.groupIds)}</select></label>` : `<div class="badge-row">${groupBadges(user.groupIds)}</div>`}
           <div class="toolbar">
             ${editableUser || editableGroups ? `<button class="primary">${isCreate ? "Создать пользователя" : "Сохранить пользователя"}</button>` : ""}
@@ -2196,7 +2140,7 @@ app.addEventListener("change", (event) => {
   render();
 });
 
-app.addEventListener("submit", (event) => {
+app.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
   const formData = new FormData(form);
@@ -2206,8 +2150,8 @@ app.addEventListener("submit", (event) => {
     const email = formData.get("email").trim().toLowerCase();
     const password = formData.get("password");
     if (authMode === "login") {
-      const user = state.users.find((item) => item.email.toLowerCase() === email && item.password === password);
-      if (!user) {
+      const user = state.users.find((item) => item.email.toLowerCase() === email);
+      if (!user || !(await passwordMatches(user, password))) {
         alert("Пользователь не найден или пароль неверный");
         return;
       }
@@ -2236,7 +2180,7 @@ app.addEventListener("submit", (event) => {
         id: id("u"),
         name: formData.get("name").trim(),
         email,
-        password,
+        password: await hashPassword(password),
         role: "QA",
         status: "pending",
         requestedAt: Date.now(),
@@ -2370,7 +2314,7 @@ app.addEventListener("submit", (event) => {
       email: formData.get("email").trim(),
       role: normalizeRole(formData.get("role")),
       status: "approved",
-      password: formData.get("password"),
+      password: await hashPassword(formData.get("password")),
       teamsEmail: "",
       telegramUrl: "",
       groupIds: selectedValues(form.elements.groupIds),
@@ -2397,7 +2341,10 @@ app.addEventListener("submit", (event) => {
       user.email = email;
       user.role = normalizeRole(formData.get("role"));
       user.status = normalizeUserStatus(formData.get("status"));
-      user.password = formData.get("password");
+      const nextPassword = formData.get("password");
+      if (nextPassword) {
+        user.password = await hashPassword(nextPassword);
+      }
       user.rejectedAt = user.status === "rejected" ? user.rejectedAt || Date.now() : null;
       if (user.status !== "approved") {
         user.activeSessionToken = null;
@@ -2419,7 +2366,10 @@ app.addEventListener("submit", (event) => {
   if (form.dataset.form === "profile") {
     const user = currentUser();
     if (!user) return;
-    user.password = formData.get("password");
+    const nextPassword = formData.get("password");
+    if (nextPassword) {
+      user.password = await hashPassword(nextPassword);
+    }
     user.teamsEmail = formData.get("teamsEmail").trim();
     user.telegramUrl = formData.get("telegramUrl").trim();
     notify("Профиль сохранён.");
@@ -2493,6 +2443,9 @@ app.addEventListener("input", (event) => {
 
 async function init() {
   state = await loadState();
+  if (passwordsMigratedOnLoad) {
+    saveState();
+  }
   render();
   setInterval(checkRemoteSession, sessionTouchIntervalMs);
 }
