@@ -671,7 +671,7 @@ function renderDashboard() {
   const cases = visibleCases();
   const suites = visibleSuites();
   const stats = aggregate(cases);
-  const recentCases = cases.slice(0, 4).map(renderCaseCard).join("");
+  const recentCases = cases.slice(0, 4).map((testCase) => renderCaseCard(testCase, { exportable: false })).join("");
 
   return `
     ${topbar("Обзор", "Контроль прохождения тестов", "Общий процент успешных и упавших шагов считается по доступным кейсам.")}
@@ -838,17 +838,18 @@ function renderCreateCase() {
   `;
 }
 
-function renderCaseCard(testCase) {
+function renderCaseCard(testCase, options = {}) {
   const progress = progressForCase(testCase);
   const editable = canEditCase(testCase);
   const expanded = expandedCaseId === testCase.id;
+  const exportable = options.exportable !== false;
   const exportChecked = selectedExportCaseIds.includes(testCase.id);
   return `
     <article class="item-card case-card ${expanded ? "expanded" : ""}">
-      <label class="case-export-check">
+      ${exportable ? `<label class="case-export-check">
         <input type="checkbox" data-export-case-id="${testCase.id}" ${exportChecked ? "checked" : ""} />
         <span>Выгрузить</span>
-      </label>
+      </label>` : ""}
       <button class="case-summary" data-toggle-case="${testCase.id}" aria-expanded="${expanded ? "true" : "false"}">
         <div>
           <h3><span class="case-caret">${expanded ? "−" : "+"}</span>${escapeHtml(testCase.title)}</h3>
