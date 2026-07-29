@@ -108,6 +108,7 @@ let appNotice = "";
 let selectedGroupId = "all";
 let selectedCaseSuiteId = "all";
 let caseSearchQuery = "";
+let selectedExportCaseIds = [];
 let expandedCaseId = null;
 let editingSuiteGroupIds = [];
 let editingCaseId = null;
@@ -537,6 +538,7 @@ function render() {
           ${isAdmin() || isManager() ? navButton("users", "◎", "Пользователи") : ""}
           ${isAdmin() ? navButton("registration-requests", "◍", `Заявки${pendingUsers().length ? ` (${pendingUsers().length})` : ""}`) : ""}
         </nav>
+        <a class="sidebar-pm-link" href="https://pm.devorx.ru/projects/newp2/issues?set_filter=1&sort=" target="_blank" rel="noreferrer">Перейти в ПМ</a>
         <div class="sidebar-user">
           <button class="sidebar-profile ${view === "profile" ? "active" : ""}" data-view="profile">
             <strong>${escapeHtml(currentUser().name)}</strong>
@@ -663,6 +665,7 @@ function resetUiState() {
   selectedGroupId = "all";
   selectedCaseSuiteId = "all";
   caseSearchQuery = "";
+  selectedExportCaseIds = [];
   expandedCaseId = null;
   editingSuiteGroupIds = [];
   editingCaseId = null;
@@ -821,8 +824,29 @@ function renderCases() {
     )}
     ${renderCaseSearch()}
     ${renderCaseSuiteFilters()}
+    ${renderCaseExportPanel(filtered)}
     <section>
       <div class="case-list">${filtered.map(renderCaseCard).join("") || empty(emptyText)}</div>
+    </section>
+  `;
+}
+
+function renderCaseExportPanel(cases) {
+  if (!cases.length) return "";
+  const visibleIds = cases.map((testCase) => testCase.id);
+  const selectedVisibleCount = visibleIds.filter((caseId) => selectedExportCaseIds.includes(caseId)).length;
+  const selectedTotalCount = selectedExportCaseIds.filter((caseId) => state.cases.some((testCase) => testCase.id === caseId)).length;
+  return `
+    <section class="case-export-panel">
+      <div>
+        <strong>Выгрузка в Excel</strong>
+        <span class="muted">Выбрано: ${selectedTotalCount}</span>
+      </div>
+      <div class="toolbar">
+        <button class="secondary" type="button" data-select-visible-cases>${selectedVisibleCount === visibleIds.length ? "Все видимые выбраны" : "Выбрать видимые"}</button>
+        <button class="secondary" type="button" data-clear-export-cases ${selectedTotalCount ? "" : "disabled"}>Снять выбор</button>
+        <button class="primary" type="button" data-export-cases ${selectedTotalCount ? "" : "disabled"}>Выгрузить в Excel</button>
+      </div>
     </section>
   `;
 }
@@ -874,8 +898,13 @@ function renderCaseCard(testCase) {
   const progress = progressForCase(testCase);
   const editable = canEditCase(testCase);
   const expanded = expandedCaseId === testCase.id;
+  const exportChecked = selectedExportCaseIds.includes(testCase.id);
   return `
     <article class="item-card case-card ${expanded ? "expanded" : ""}">
+      <label class="case-export-check">
+        <input type="checkbox" data-export-case-id="${testCase.id}" ${exportChecked ? "checked" : ""} />
+        <span>Выгрузить</span>
+      </label>
       <button class="case-summary" data-toggle-case="${testCase.id}" aria-expanded="${expanded ? "true" : "false"}">
         <div>
           <h3><span class="case-caret">${expanded ? "−" : "+"}</span>${escapeHtml(testCase.title)}</h3>
@@ -1594,11 +1623,15 @@ function ownerBadge(ownerId) {
   return `<button class="badge badge-button" type="button" data-owner-contact="${owner.id}">${escapeHtml(owner.name)}</button>`;
 }
 
-function responsibleBadges(testCase) {
+function responsibleUsersForCase(testCase) {
   const owner = state.users.find((user) => user.id === testCase.ownerId);
   const ownerIds = owner && normalizeRole(owner.role) === "QA" ? [owner.id] : [];
   const userIds = Array.from(new Set([...ownerIds, ...(testCase.assignedUserIds || [])].filter(Boolean)));
-  const users = userIds.map((userId) => state.users.find((user) => user.id === userId)).filter(Boolean);
+  return userIds.map((userId) => state.users.find((user) => user.id === userId)).filter(Boolean);
+}
+
+function responsibleBadges(testCase) {
+  const users = responsibleUsersForCase(testCase);
   if (!users.length) return `<span class="badge">Ответственные не назначены</span>`;
 
   const visibleUsers = users.slice(0, 3);
@@ -1646,6 +1679,262 @@ function forbidden() {
 function selectedValues(select) {
   if (!select) return [];
   return Array.from(select.selectedOptions).map((option) => option.value);
+}
+
+function visibleFilteredCases() {
+  return filterCasesBySearch(filterCasesBySuite(visibleCases()));
+}
+
+function caseGroupNames(testCase) {
+  return (testCase.groupIds || [])
+    .map((groupId) => state.groups.find((group) => group.id === groupId))
+    .filter(Boolean)
+    .map((group) => group.name);
+}
+
+function caseSuiteNames(testCase) {
+  return state.suites.filter((suite) => suite.caseIds.includes(testCase.id)).map((suite) => suite.title);
+}
+
+function escapeXml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function caseExportRowsData(testCase) {
+  const steps = testCase.steps && testCase.steps.length ? testCase.steps : [{ precondition: "", action: "", expected: "", actual: "", comment: "", status: "" }];
+  const baseCells = [
+    testCase.title,
+    testCase.description,
+    caseSuiteNames(testCase).join(", "),
+    caseGroupNames(testCase).join(", "),
+    responsibleUsersForCase(testCase).map((user) => user.name).join(", "),
+  ];
+
+  return steps
+    .map((step, index) => [
+      ...baseCells,
+      index + 1,
+      step.precondition,
+      step.action,
+      step.expected,
+      step.actual,
+      step.comment,
+      statusLabel(step.status),
+    ]);
+}
+
+function excelColumnName(index) {
+  let name = "";
+  let value = index + 1;
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    name = String.fromCharCode(65 + remainder) + name;
+    value = Math.floor((value - 1) / 26);
+  }
+  return name;
+}
+
+function xlsxSheetXml(rows) {
+  const sheetRows = rows
+    .map((row, rowIndex) => {
+      const rowNumber = rowIndex + 1;
+      const cells = row
+        .map((cell, cellIndex) => {
+          const ref = `${excelColumnName(cellIndex)}${rowNumber}`;
+          return `<c r="${ref}" t="inlineStr"><is><t>${escapeXml(cell || "")}</t></is></c>`;
+        })
+        .join("");
+      return `<row r="${rowNumber}">${cells}</row>`;
+    })
+    .join("");
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"/></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  <cols>
+    <col min="1" max="1" width="28" customWidth="1"/>
+    <col min="2" max="5" width="24" customWidth="1"/>
+    <col min="6" max="6" width="10" customWidth="1"/>
+    <col min="7" max="12" width="28" customWidth="1"/>
+  </cols>
+  <sheetData>${sheetRows}</sheetData>
+</worksheet>`;
+}
+
+function crc32(bytes) {
+  if (!crc32.table) {
+    crc32.table = Array.from({ length: 256 }, (_, index) => {
+      let value = index;
+      for (let bit = 0; bit < 8; bit += 1) {
+        value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+      }
+      return value >>> 0;
+    });
+  }
+  let crc = 0xffffffff;
+  bytes.forEach((byte) => {
+    crc = crc32.table[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  });
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function writeUint16(target, offset, value) {
+  target[offset] = value & 0xff;
+  target[offset + 1] = (value >>> 8) & 0xff;
+}
+
+function writeUint32(target, offset, value) {
+  target[offset] = value & 0xff;
+  target[offset + 1] = (value >>> 8) & 0xff;
+  target[offset + 2] = (value >>> 16) & 0xff;
+  target[offset + 3] = (value >>> 24) & 0xff;
+}
+
+function concatBytes(parts) {
+  const totalLength = parts.reduce((sum, part) => sum + part.length, 0);
+  const output = new Uint8Array(totalLength);
+  let offset = 0;
+  parts.forEach((part) => {
+    output.set(part, offset);
+    offset += part.length;
+  });
+  return output;
+}
+
+function makeLocalZipHeader(file) {
+  const header = new Uint8Array(30);
+  writeUint32(header, 0, 0x04034b50);
+  writeUint16(header, 4, 20);
+  writeUint16(header, 6, 0);
+  writeUint16(header, 8, 0);
+  writeUint16(header, 10, 0);
+  writeUint16(header, 12, 0);
+  writeUint32(header, 14, file.crc);
+  writeUint32(header, 18, file.content.length);
+  writeUint32(header, 22, file.content.length);
+  writeUint16(header, 26, file.name.length);
+  writeUint16(header, 28, 0);
+  return header;
+}
+
+function makeCentralZipHeader(file) {
+  const header = new Uint8Array(46);
+  writeUint32(header, 0, 0x02014b50);
+  writeUint16(header, 4, 20);
+  writeUint16(header, 6, 20);
+  writeUint16(header, 8, 0);
+  writeUint16(header, 10, 0);
+  writeUint16(header, 12, 0);
+  writeUint16(header, 14, 0);
+  writeUint32(header, 16, file.crc);
+  writeUint32(header, 20, file.content.length);
+  writeUint32(header, 24, file.content.length);
+  writeUint16(header, 28, file.name.length);
+  writeUint16(header, 30, 0);
+  writeUint16(header, 32, 0);
+  writeUint16(header, 34, 0);
+  writeUint16(header, 36, 0);
+  writeUint32(header, 38, 0);
+  writeUint32(header, 42, file.offset);
+  return header;
+}
+
+function makeZipBlob(fileEntries) {
+  const encoder = new TextEncoder();
+  let offset = 0;
+  const files = fileEntries.map(([name, content]) => {
+    const file = {
+      name: encoder.encode(name),
+      content: encoder.encode(content),
+      offset,
+    };
+    file.crc = crc32(file.content);
+    offset += 30 + file.name.length + file.content.length;
+    return file;
+  });
+
+  const localParts = files.flatMap((file) => [makeLocalZipHeader(file), file.name, file.content]);
+  const centralOffset = offset;
+  const centralParts = files.flatMap((file) => [makeCentralZipHeader(file), file.name]);
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const end = new Uint8Array(22);
+  writeUint32(end, 0, 0x06054b50);
+  writeUint16(end, 8, files.length);
+  writeUint16(end, 10, files.length);
+  writeUint32(end, 12, centralSize);
+  writeUint32(end, 16, centralOffset);
+  writeUint16(end, 20, 0);
+
+  return new Blob([concatBytes([...localParts, ...centralParts, end])], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+}
+
+function makeXlsxBlob(rows) {
+  return makeZipBlob([
+    [
+      "[Content_Types].xml",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>`,
+    ],
+    [
+      "_rels/.rels",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`,
+    ],
+    [
+      "xl/workbook.xml",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Кейсы" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`,
+    ],
+    [
+      "xl/_rels/workbook.xml.rels",
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>`,
+    ],
+    ["xl/worksheets/sheet1.xml", xlsxSheetXml(rows)],
+  ]);
+}
+
+function downloadSelectedCasesExcel() {
+  const selectedCases = selectedExportCaseIds
+    .map((caseId) => state.cases.find((testCase) => testCase.id === caseId))
+    .filter((testCase) => testCase && canUseCase(testCase));
+  if (!selectedCases.length) {
+    notify("Выберите кейсы для выгрузки.");
+    render();
+    return;
+  }
+
+  const headers = ["Кейс", "Описание", "Сьюты", "Группы", "Ответственные", "№ шага", "Предусловие", "Шаги", "ОР", "ФР", "Комментарии", "Статус результата"];
+  const rows = [headers, ...selectedCases.flatMap(caseExportRowsData)];
+  const blob = makeXlsxBlob(rows);
+  const link = document.createElement("a");
+  const datePart = new Date().toISOString().slice(0, 10);
+  const url = URL.createObjectURL(blob);
+  link.href = url;
+  link.download = `test-cases-${datePart}.xlsx`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  notify(`Выгружено кейсов: ${selectedCases.length}.`);
+  render();
 }
 
 app.addEventListener("click", (event) => {
@@ -1801,9 +2090,25 @@ app.addEventListener("click", (event) => {
     render();
   }
 
+  if (button.dataset.selectVisibleCases !== undefined) {
+    const visibleIds = visibleFilteredCases().map((testCase) => testCase.id);
+    selectedExportCaseIds = Array.from(new Set([...selectedExportCaseIds, ...visibleIds]));
+    render();
+  }
+
+  if (button.dataset.clearExportCases !== undefined) {
+    selectedExportCaseIds = [];
+    render();
+  }
+
+  if (button.dataset.exportCases !== undefined) {
+    downloadSelectedCasesExcel();
+  }
+
   if (button.dataset.deleteCase) {
     if (!canDeleteCase()) return;
     state.cases = state.cases.filter((item) => item.id !== button.dataset.deleteCase);
+    selectedExportCaseIds = selectedExportCaseIds.filter((caseId) => caseId !== button.dataset.deleteCase);
     state.suites.forEach((suite) => {
       suite.caseIds = suite.caseIds.filter((caseId) => caseId !== button.dataset.deleteCase);
     });
@@ -1876,6 +2181,19 @@ app.addEventListener("click", (event) => {
     saveState();
     render();
   }
+});
+
+app.addEventListener("change", (event) => {
+  if (state.currentUserId && !touchSession()) return;
+  const input = event.target;
+  if (!input.dataset || !input.dataset.exportCaseId) return;
+  const caseId = input.dataset.exportCaseId;
+  if (input.checked) {
+    selectedExportCaseIds = Array.from(new Set([...selectedExportCaseIds, caseId]));
+  } else {
+    selectedExportCaseIds = selectedExportCaseIds.filter((selectedCaseId) => selectedCaseId !== caseId);
+  }
+  render();
 });
 
 app.addEventListener("submit", (event) => {
