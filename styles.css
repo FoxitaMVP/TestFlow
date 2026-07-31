@@ -48,27 +48,147 @@ button {
 }
 
 .auth-visual {
+  position: relative;
+  overflow: hidden;
   padding: 56px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  background:
-    linear-gradient(rgba(15, 62, 76, 0.18), rgba(15, 62, 76, 0.38)),
-    url("https://images.unsplash.com/photo-1551288049-bebda4e38f71?auto=format&fit=crop&w=1400&q=80")
-      center/cover;
+  background: #0d2d34;
   color: #fff;
 }
 
+.auth-visual::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.07) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07) 1px, transparent 1px);
+  background-size: 56px 56px;
+  opacity: 0.5;
+  animation: authGridDrift 22s linear infinite;
+}
+
+.auth-visual::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(115deg, rgba(0, 148, 148, 0.36), transparent 38%),
+    linear-gradient(250deg, rgba(244, 182, 94, 0.22), transparent 48%),
+    linear-gradient(0deg, rgba(7, 22, 27, 0.72), rgba(7, 22, 27, 0.2));
+}
+
+.auth-animation {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.auth-track,
+.auth-node,
+.auth-panel-line {
+  position: absolute;
+  display: block;
+}
+
+.auth-track {
+  left: -18%;
+  width: 136%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(124, 233, 222, 0.72), transparent);
+  opacity: 0.65;
+  transform: rotate(-18deg);
+  animation: authTrackMove 8s ease-in-out infinite;
+}
+
+.track-one {
+  top: 24%;
+}
+
+.track-two {
+  top: 48%;
+  animation-delay: -2.6s;
+}
+
+.track-three {
+  top: 72%;
+  animation-delay: -5.1s;
+}
+
+.auth-node {
+  width: 86px;
+  height: 58px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.02)),
+    rgba(12, 61, 69, 0.42);
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.16);
+  animation: authTileFloat 9s ease-in-out infinite;
+}
+
+.node-one {
+  top: 16%;
+  right: 16%;
+}
+
+.node-two {
+  top: 36%;
+  left: 12%;
+  width: 124px;
+  animation-delay: -2s;
+}
+
+.node-three {
+  right: 28%;
+  bottom: 28%;
+  width: 104px;
+  animation-delay: -4.2s;
+}
+
+.node-four {
+  right: 10%;
+  bottom: 12%;
+  height: 86px;
+  animation-delay: -6.4s;
+}
+
+.auth-panel-line {
+  left: 12%;
+  right: 16%;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.06));
+  animation: authPulse 5s ease-in-out infinite;
+}
+
+.line-one {
+  top: 62%;
+}
+
+.line-two {
+  top: 67%;
+  animation-delay: -2.5s;
+}
+
 .auth-brand {
+  position: relative;
+  z-index: 1;
   font-size: 16px;
   font-weight: 800;
   letter-spacing: 0;
 }
 
+.auth-visual > div:not(.auth-animation) {
+  position: relative;
+  z-index: 1;
+}
+
 .auth-visual h1 {
   max-width: 620px;
   margin: 0 0 18px;
-  font-size: clamp(42px, 5vw, 72px);
+  font-size: 64px;
   line-height: 0.96;
   letter-spacing: 0;
 }
@@ -79,6 +199,53 @@ button {
   font-size: 18px;
   line-height: 1.6;
   color: rgba(255, 255, 255, 0.86);
+}
+
+@keyframes authGridDrift {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: 112px 56px;
+  }
+}
+
+@keyframes authTrackMove {
+  0%,
+  100% {
+    transform: translateX(-5%) rotate(-18deg);
+    opacity: 0.38;
+  }
+
+  50% {
+    transform: translateX(5%) rotate(-18deg);
+    opacity: 0.86;
+  }
+}
+
+@keyframes authTileFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-18px);
+  }
+}
+
+@keyframes authPulse {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: scaleX(0.86);
+  }
+
+  50% {
+    opacity: 0.76;
+    transform: scaleX(1);
+  }
 }
 
 .auth-panel {
@@ -835,6 +1002,10 @@ a.badge {
     padding: 32px;
   }
 
+  .auth-visual h1 {
+    font-size: 48px;
+  }
+
   .sidebar {
     position: static;
     height: auto;
@@ -863,6 +1034,10 @@ a.badge {
   .auth-panel,
   .auth-card {
     padding: 20px;
+  }
+
+  .auth-visual h1 {
+    font-size: 38px;
   }
 
   .step-row {

@@ -1324,6 +1324,17 @@ function renderAuth() {
   app.innerHTML = `
     <section class="auth-shell">
       <div class="auth-visual">
+        <div class="auth-animation" aria-hidden="true">
+          <span class="auth-track track-one"></span>
+          <span class="auth-track track-two"></span>
+          <span class="auth-track track-three"></span>
+          <span class="auth-node node-one"></span>
+          <span class="auth-node node-two"></span>
+          <span class="auth-node node-three"></span>
+          <span class="auth-node node-four"></span>
+          <span class="auth-panel-line line-one"></span>
+          <span class="auth-panel-line line-two"></span>
+        </div>
         <div class="auth-brand">TestFlow QA</div>
         <div>
           <h1>Система управления тест-кейсами</h1>
