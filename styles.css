@@ -331,6 +331,93 @@ label {
   font-weight: 700;
 }
 
+.check-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.check-field legend {
+  padding: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.check-list {
+  display: grid;
+  gap: 8px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.check-list-rich {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  max-height: 260px;
+}
+
+.check-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 34px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.check-option:has(input:checked) {
+  border-color: rgba(0, 139, 139, 0.28);
+  background: #eefafa;
+  color: var(--accent-dark);
+}
+
+.check-option:hover {
+  background: #f4f8f8;
+}
+
+.check-option.disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.check-option input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}
+
+.check-option span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.check-option small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.option-user,
+.option-suite {
+  align-items: flex-start;
+  border: 1px solid transparent;
+}
+
 input,
 select,
 textarea {

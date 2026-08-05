@@ -823,8 +823,11 @@ function renderCreateCase() {
         <label>Название<input name="title" required placeholder="Например, оформление заказа" /></label>
         <label>Описание<textarea name="description" placeholder="Что проверяем"></textarea></label>
         <label>Ответственный<select name="ownerId">${renderOwnerOptions()}</select></label>
-        ${canAssignQa() ? `<label>Назначенные QA<select name="assignedUserIds" multiple size="4">${renderQaOptions()}</select></label>` : ""}
-        <label>Сьюты<select name="suiteIds" multiple size="4" ${availableSuites.length ? "" : "disabled"}>${renderSuiteOptions([], availableSuites)}</select></label>
+        ${canAssignQa() ? `<fieldset class="check-field"><legend>Назначенные QA</legend>${renderQaCheckboxes()}</fieldset>` : ""}
+        <fieldset class="check-field">
+          <legend>Сьюты</legend>
+          ${renderSuiteCheckboxes([], availableSuites, !availableSuites.length)}
+        </fieldset>
         ${availableSuites.length ? "" : `<p class="muted">Для создания кейса нужно быть назначенным хотя бы в одну группу со сьютом.</p>`}
         <div class="step-list step-table" data-steps>
           ${renderStepInputRow("add")}
@@ -912,8 +915,11 @@ function renderEditCase() {
       <form class="form-stack" data-form="edit-case">
         <label>Название<input name="title" required value="${escapeHtml(testCase.title)}" /></label>
         <label>Описание<textarea name="description" placeholder="Что проверяем">${escapeHtml(testCase.description)}</textarea></label>
-        ${canAssignQa() ? `<label>Назначенные QA<select name="assignedUserIds" multiple size="4">${renderQaOptions(testCase.assignedUserIds)}</select></label>` : ""}
-        <label>Сьюты<select name="suiteIds" multiple size="4">${renderSuiteOptions(selectedSuiteIds, availableSuites)}</select></label>
+        ${canAssignQa() ? `<fieldset class="check-field"><legend>Назначенные QA</legend>${renderQaCheckboxes(testCase.assignedUserIds)}</fieldset>` : ""}
+        <fieldset class="check-field">
+          <legend>Сьюты</legend>
+          ${renderSuiteCheckboxes(selectedSuiteIds, availableSuites)}
+        </fieldset>
         <div>
           <h2>Текущие шаги</h2>
           <div class="step-table-wrap" style="margin-top:12px">
@@ -1042,7 +1048,10 @@ function renderCreateSuite() {
       <form class="form-stack" data-form="suite">
         <label>Название<input name="title" required placeholder="Например, Release 2.4" /></label>
         <label>Описание<textarea name="description" placeholder="Назначение набора"></textarea></label>
-        <label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions()}</select></label>
+        <fieldset class="check-field">
+          <legend>Группы</legend>
+          ${renderGroupCheckboxes()}
+        </fieldset>
         <label>Кейсы<select name="caseIds" multiple size="6">${state.cases.map((item) => `<option value="${item.id}">${escapeHtml(item.title)}</option>`).join("")}</select></label>
         <div class="toolbar">
           <button class="primary">Создать сьют</button>
@@ -1101,11 +1110,10 @@ function renderEditSuite() {
     )}
     <section class="panel form-page">
       <form class="form-stack" data-form="edit-suite">
-        <label>Группы
-          <select name="groupIds" multiple size="4" data-edit-suite-groups>
-            ${renderGroupOptions(activeGroupIds)}
-          </select>
-        </label>
+        <fieldset class="check-field">
+          <legend>Группы</legend>
+          ${renderGroupCheckboxes(activeGroupIds, "data-edit-suite-groups")}
+        </fieldset>
         <div>
           <h2>Текущие кейсы</h2>
           <div class="badge-row" style="margin-top:12px">
@@ -1253,7 +1261,10 @@ function renderRegistrationRequestCard(user) {
           <span class="badge warn">Новая заявка</span>
         </div>
         <label>Роль<select name="role">${renderRoleOptions(user.role)}</select></label>
-        <label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions(user.groupIds)}</select></label>
+        <fieldset class="check-field">
+          <legend>Группы</legend>
+          ${renderGroupCheckboxes(user.groupIds)}
+        </fieldset>
         <div class="toolbar">
           <button class="primary" data-action="approve-registration" data-user-id="${user.id}">Одобрить</button>
           <button class="danger" type="button" data-reject-registration="${user.id}">Отклонить</button>
@@ -1309,7 +1320,7 @@ function renderUserModal() {
           ${editableUser ? `<label>Роль<select name="role" required>${renderRoleOptions(isCreate ? "QA" : user.role)}</select></label>` : ""}
           ${editableUser && !isCreate ? `<label>Статус<select name="status">${renderUserStatusOptions(user.status)}</select></label>` : ""}
           ${editableUser ? `<label>${isCreate ? "Пароль" : "Новый пароль"}<input name="password" type="password" ${isCreate ? "required" : ""} placeholder="${isCreate ? "Минимум 4 символа" : "Оставьте пустым, чтобы не менять"}" value="" /></label>` : ""}
-          ${editableGroups ? `<label>Группы<select name="groupIds" multiple size="4">${renderGroupOptions(isCreate ? [] : user.groupIds)}</select></label>` : `<div class="badge-row">${groupBadges(user.groupIds)}</div>`}
+          ${editableGroups ? `<fieldset class="check-field"><legend>Группы</legend>${renderGroupCheckboxes(isCreate ? [] : user.groupIds)}</fieldset>` : `<div class="badge-row">${groupBadges(user.groupIds)}</div>`}
           <div class="toolbar">
             ${editableUser || editableGroups ? `<button class="primary">${isCreate ? "Создать пользователя" : "Сохранить пользователя"}</button>` : ""}
             ${!isCreate && canManageUsers() ? `<button class="danger" type="button" data-delete-user="${user.id}" ${user.id === state.currentUserId ? "disabled" : ""}>Удалить</button>` : ""}
@@ -1413,6 +1424,20 @@ function renderGroupOptions(selected = []) {
     .join("");
 }
 
+function renderGroupCheckboxes(selected = [], inputAttrs = "") {
+  const groups = state.groups
+    .map(
+      (group) => `
+        <label class="check-option">
+          <input name="groupIds" type="checkbox" value="${group.id}" ${selected.includes(group.id) ? "checked" : ""} ${inputAttrs} />
+          <span>${escapeHtml(group.name)}</span>
+        </label>
+      `,
+    )
+    .join("");
+  return `<div class="check-list">${groups || `<span class="muted">Групп пока нет</span>`}</div>`;
+}
+
 function renderQaOptions(selected = []) {
   return state.users
     .filter((user) => normalizeRole(user.role) === "QA")
@@ -1420,10 +1445,50 @@ function renderQaOptions(selected = []) {
     .join("");
 }
 
+function renderQaCheckboxes(selected = []) {
+  const users = state.users
+    .filter((user) => normalizeRole(user.role) === "QA")
+    .map(
+      (user) => `
+        <label class="check-option option-user">
+          <input name="assignedUserIds" type="checkbox" value="${user.id}" ${selected.includes(user.id) ? "checked" : ""} />
+          <span>
+            <strong>${escapeHtml(user.name)}</strong>
+            <small>${escapeHtml(user.email)}</small>
+          </span>
+        </label>
+      `,
+    )
+    .join("");
+  return `<div class="check-list check-list-rich">${users || `<span class="muted">QA пока нет</span>`}</div>`;
+}
+
 function renderSuiteOptions(selected = [], suites = state.suites) {
   return suites
     .map((suite) => `<option value="${suite.id}" ${selected.includes(suite.id) ? "selected" : ""}>${escapeHtml(suite.title)}</option>`)
     .join("");
+}
+
+function renderSuiteCheckboxes(selected = [], suites = state.suites, disabled = false) {
+  const items = suites
+    .map((suite) => {
+      const groupNames = suite.groupIds
+        .map((groupId) => state.groups.find((group) => group.id === groupId))
+        .filter(Boolean)
+        .map((group) => group.name)
+        .join(", ");
+      return `
+        <label class="check-option option-suite ${disabled ? "disabled" : ""}">
+          <input name="suiteIds" type="checkbox" value="${suite.id}" ${selected.includes(suite.id) ? "checked" : ""} ${disabled ? "disabled" : ""} />
+          <span>
+            <strong>${escapeHtml(suite.title)}</strong>
+            <small>${escapeHtml(groupNames || "Без группы")}</small>
+          </span>
+        </label>
+      `;
+    })
+    .join("");
+  return `<div class="check-list check-list-rich">${items || `<span class="muted">Сьютов пока нет</span>`}</div>`;
 }
 
 function renderGroupFilters() {
@@ -1634,6 +1699,16 @@ function forbidden() {
 
 function selectedValues(select) {
   if (!select) return [];
+  const isRadioNodeList = typeof RadioNodeList !== "undefined" && select instanceof RadioNodeList;
+  const isNodeList = typeof NodeList !== "undefined" && select instanceof NodeList;
+  if (isRadioNodeList || isNodeList || Array.isArray(select)) {
+    return Array.from(select)
+      .filter((item) => item.checked || item.selected)
+      .map((item) => item.value);
+  }
+  if (select.type === "checkbox") {
+    return select.checked ? [select.value] : [];
+  }
   return Array.from(select.selectedOptions).map((option) => option.value);
 }
 
@@ -2410,7 +2485,7 @@ app.addEventListener("change", (event) => {
 
   if (event.target.dataset.editSuiteGroups !== undefined) {
     if (!canManageSuites()) return;
-    editingSuiteGroupIds = selectedValues(event.target);
+    editingSuiteGroupIds = selectedValues(event.target.form.elements.groupIds);
     render();
     return;
   }
