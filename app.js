@@ -35,24 +35,70 @@ let groupModalMode = null;
 let editingGroupId = null;
 let centerNoticeTimer = null;
 let ownerContactUserId = null;
+let publicLinkModalUrl = "";
 let passwordsMigratedOnLoad = false;
 let errorGuidsMigratedOnLoad = false;
+let publicCaseDirty = false;
+let publicTouchedStepIds = new Set();
 
 function publicCaseIdFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  return params.get("publicCase") || params.get("case");
+  const caseId = params.get("publicCase") || params.get("case");
+  if (caseId) return caseId;
+  return caseByProblemGuid(publicProblemGuidFromUrl())?.id || "";
 }
 
 function isPublicCaseView() {
-  return Boolean(publicCaseIdFromUrl());
+  return Boolean(publicCaseIdFromUrl() || publicProblemGuidFromUrl());
 }
 
-function publicCaseUrl(caseId) {
+function publicProblemGuidFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("guid") || params.get("errorGuid") || params.get("problem") || "";
+}
+
+function caseByProblemGuid(problemGuid) {
+  if (!problemGuid || !state || !state.cases) return null;
+  return state.cases.find((testCase) => (testCase.steps || []).some((step) => step.errorGuid === problemGuid)) || null;
+}
+
+function publicCaseUrl(caseId, problemGuid = "") {
   const url = new URL(window.location.href);
   url.search = "";
   url.hash = "";
   url.searchParams.set("publicCase", caseId);
+  if (problemGuid) {
+    url.searchParams.set("guid", problemGuid);
+  }
   return url.toString();
+}
+
+function markPublicCaseDirty() {
+  publicCaseDirty = true;
+  const button = app.querySelector("[data-save-public-case]");
+  const note = app.querySelector("[data-public-save-note]");
+  if (button) button.textContent = "Сохранить изменения";
+  if (note) note.textContent = "Есть несохранённые изменения";
+}
+
+function markPublicStepTouched(caseId, stepId) {
+  publicTouchedStepIds.add(`${caseId}:${stepId}`);
+  markPublicCaseDirty();
+}
+
+function clearPublicProblemGuidIfResolved(caseId) {
+  const problemGuid = publicProblemGuidFromUrl();
+  if (!problemGuid) return false;
+  const step = findStepByProblemGuid(caseId, problemGuid);
+  if (!step || step.status === "failed") return false;
+  window.history.replaceState({}, "", publicCaseUrl(caseId));
+  return true;
+}
+
+function findStepByProblemGuid(caseId, problemGuid) {
+  const testCase = state.cases.find((item) => item.id === caseId);
+  if (!testCase || !problemGuid) return null;
+  return (testCase.steps || []).find((step) => step.errorGuid === problemGuid) || null;
 }
 
 async function loadState() {
@@ -341,6 +387,10 @@ function isManager(user = currentUser()) {
   return normalizeRole(user && user.role) === "Manager";
 }
 
+function isQa(user = currentUser()) {
+  return normalizeRole(user && user.role) === "QA";
+}
+
 function canManageCases(user = currentUser()) {
   return isAdmin(user) || isManager(user);
 }
@@ -375,12 +425,16 @@ function canAssignQa(user = currentUser()) {
   return isAdmin(user) || isManager(user);
 }
 
+function canViewCaseErrors(user = currentUser()) {
+  return Boolean(user) && (isAdmin(user) || isManager(user) || isQa(user));
+}
+
 function canOpenView(target, user = currentUser()) {
   if (!user) return false;
   if (target === "profile") return true;
   if (isAdmin(user)) return true;
   if (isManager(user)) return true;
-  if (normalizeRole(user.role) === "QA") return ["dashboard", "cases", "create-case", "edit-case"].includes(target);
+  if (isQa(user)) return ["dashboard", "cases", "create-case", "edit-case", "case-errors"].includes(target);
   return false;
 }
 
@@ -460,6 +514,7 @@ function normalizeStep(step) {
     comment: step.comment || "",
     status: step.status || "untested",
     errorGuid: step.errorGuid || null,
+    errorSavedAt: Number(step.errorSavedAt || 0) || null,
   };
   ensureStepErrorGuid(normalized);
   return normalized;
@@ -480,6 +535,13 @@ function ensureFailedStepGuids(cases = []) {
     });
   });
   return changed;
+}
+
+function markStepErrorSaved(step) {
+  if (!step || step.status !== "failed") return false;
+  ensureStepErrorGuid(step);
+  step.errorSavedAt = Date.now();
+  return true;
 }
 
 function progressForCase(testCase) {
@@ -537,7 +599,7 @@ function render() {
           ${isAdmin() || isManager() ? navButton("groups", "◌", "Группы") : ""}
           ${isAdmin() || isManager() ? navButton("users", "◎", "Пользователи") : ""}
           ${isAdmin() ? navButton("registration-requests", "◍", `Заявки${pendingUsers().length ? ` (${pendingUsers().length})` : ""}`) : ""}
-          ${isAdmin() || isManager() ? navButton("case-errors", "!", `Ошибки${caseErrors().length ? ` (${caseErrors().length})` : ""}`) : ""}
+          ${canViewCaseErrors() ? navButton("case-errors", "!", `Ошибки${caseErrors().length ? ` (${caseErrors().length})` : ""}`) : ""}
         </nav>
         <a class="sidebar-pm-link" href="https://pm.devorx.ru/projects/newp2/issues?set_filter=1&sort=" target="_blank" rel="noreferrer">Перейти в ПМ</a>
         <div class="sidebar-user">
@@ -548,7 +610,7 @@ function render() {
           <button class="secondary" data-action="logout">Выйти</button>
         </div>
       </aside>
-      <section class="content">${renderAppNotice()}${renderView()}${renderOwnerContactModal()}</section>
+      <section class="content">${renderAppNotice()}${renderView()}${renderOwnerContactModal()}${renderPublicLinkModal()}</section>
     </section>
   `;
 }
@@ -676,6 +738,7 @@ function resetUiState() {
   groupModalMode = null;
   editingGroupId = null;
   ownerContactUserId = null;
+  publicLinkModalUrl = "";
 }
 
 function resetUiAfterLogin() {
@@ -785,7 +848,7 @@ function renderProfile() {
 
 function profileLink(label, url) {
   if (!url) return `<span class="badge">${label}: не указан</span>`;
-  return `<a class="badge" href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${label}</a>`;
+  return `<a class="badge" href="${escapeHtml(url)}">${label}</a>`;
 }
 
 function profileContact(label, value) {
@@ -930,7 +993,6 @@ function renderCaseCard(testCase, options = {}) {
         expanded
           ? `<div class="item-actions">
           ${editable ? `<button class="secondary" data-edit-case="${testCase.id}">Редактировать</button>` : ""}
-          <a class="secondary link-button" href="${escapeHtml(publicCaseUrl(testCase.id))}" target="_blank" rel="noreferrer">Открыть публичную ссылку</a>
           <button class="secondary" type="button" data-copy-public-case="${testCase.id}">Скопировать ссылку</button>
         </div>
       <div class="step-table-wrap">
@@ -1059,6 +1121,7 @@ function renderStatusOnlyStepRow(caseId, step) {
 function renderPublicCase() {
   const caseId = publicCaseIdFromUrl();
   const testCase = state.cases.find((item) => item.id === caseId);
+  const problemGuid = publicProblemGuidFromUrl();
 
   if (!testCase) {
     app.innerHTML = `
@@ -1076,6 +1139,8 @@ function renderPublicCase() {
   }
 
   const progress = progressForCase(testCase);
+  const problemStep = problemGuid ? testCase.steps.find((step) => step.errorGuid === problemGuid) : null;
+  const visibleSteps = problemStep ? [problemStep] : testCase.steps;
   app.innerHTML = `
     <section class="public-shell">
       ${renderAppNotice()}
@@ -1088,6 +1153,8 @@ function renderPublicCase() {
           </div>
           <a class="secondary public-login-link" href="${escapeHtml(location.pathname)}">К авторизации</a>
         </header>
+        ${problemGuid ? `<div class="public-problem-guid"><span>GUID разбора</span><strong>${escapeHtml(problemGuid)}</strong></div>` : ""}
+        ${problemGuid && !problemStep ? `<div class="app-notice">Проблема с таким GUID не найдена в этом кейсе. Показаны все шаги.</div>` : ""}
         <div class="badge-row">
           ${suiteBadges(testCase.id)}
           ${groupBadges(testCase.groupIds)}
@@ -1096,7 +1163,11 @@ function renderPublicCase() {
         </div>
         ${progressBar(progress)}
         <div class="public-step-list">
-          ${testCase.steps.map((step, index) => renderPublicStepRow(testCase.id, step, index)).join("") || empty("Шагов пока нет")}
+          ${visibleSteps.map((step) => renderPublicStepRow(testCase.id, step, testCase.steps.indexOf(step))).join("") || empty("Шагов пока нет")}
+        </div>
+        <div class="public-save-bar">
+          <button class="primary" type="button" data-save-public-case="${testCase.id}">${publicCaseDirty ? "Сохранить изменения" : "Сохранить"}</button>
+          <span class="muted" data-public-save-note>${publicCaseDirty ? "Есть несохранённые изменения" : "Изменения сохраняются по кнопке"}</span>
         </div>
       </section>
     </section>
@@ -1105,7 +1176,7 @@ function renderPublicCase() {
 
 function renderPublicStepRow(caseId, step, index) {
   return `
-    <article class="public-step-card">
+    <article class="public-step-card ${step.errorGuid && step.errorGuid === publicProblemGuidFromUrl() ? "public-step-card-active" : ""}">
       <div class="public-step-title">
         <span class="badge">Шаг ${index + 1}</span>
         <label class="status-only public-status">
@@ -1129,8 +1200,8 @@ function renderPublicStepRow(caseId, step, index) {
 
 function collectStepRows(form) {
   return Array.from(form.querySelectorAll("[data-new-step-row]"))
-    .map((row) =>
-      normalizeStep({
+    .map((row) => {
+      const step = normalizeStep({
         id: id("s"),
         precondition: row.querySelector('[name="stepPrecondition"]').value.trim(),
         action: row.querySelector('[name="stepAction"]').value.trim(),
@@ -1138,8 +1209,10 @@ function collectStepRows(form) {
         actual: row.querySelector('[name="stepActual"]').value.trim(),
         comment: row.querySelector('[name="stepComment"]').value.trim(),
         status: row.querySelector('[name="stepStatus"]').value,
-      }),
-    )
+      });
+      markStepErrorSaved(step);
+      return step;
+    })
     .filter((step) => step.precondition || step.action || step.expected || step.actual);
 }
 
@@ -1381,20 +1454,25 @@ function renderRegistrationRequests() {
 
 function caseErrors() {
   return visibleCases()
-    .flatMap((testCase) =>
-      (testCase.steps || [])
-        .filter((step) => step.status === "failed")
+    .flatMap((testCase) => {
+      const savedErrors = savedCaseErrorsForCase(testCase);
+      return savedErrors
         .map((step, index) => ({
           case: testCase,
           step,
-          stepIndex: index + 1,
-        })),
-    )
+          stepIndex: (testCase.steps || []).indexOf(step) + 1,
+          caseErrorCount: savedErrors.length,
+        }));
+    })
     .sort((left, right) => (left.step.errorGuid || "").localeCompare(right.step.errorGuid || ""));
 }
 
+function savedCaseErrorsForCase(testCase) {
+  return (testCase.steps || []).filter((step) => step.status === "failed" && step.errorSavedAt);
+}
+
 function renderCaseErrors() {
-  if (!isAdmin() && !isManager()) return forbidden();
+  if (!canViewCaseErrors()) return forbidden();
   const errors = caseErrors();
   return `
     ${topbar("Разбор", "Ошибки по кейсам", "Список шагов со статусом «Не успешно». У каждой ошибки есть постоянный GUID для разбора.")}
@@ -1409,6 +1487,9 @@ function renderCaseErrorCard(error) {
   const step = error.step;
   const errorGuid = step.errorGuid || "GUID будет создан при следующем сохранении";
   const actualPreview = (step.actual || "ФР не заполнен").slice(0, 255);
+  const opensSingleError = error.caseErrorCount === 1;
+  const publicGuidAttr = opensSingleError ? ` data-open-public-guid="${escapeHtml(step.errorGuid)}"` : "";
+  const publicButtonLabel = opensSingleError ? "Открыть ошибку" : "Открыть кейс";
   return `
     <article class="item-card case-error-card">
       <div class="item-head">
@@ -1418,7 +1499,10 @@ function renderCaseErrorCard(error) {
           <p class="muted">${escapeHtml(testCase.title)} · шаг ${error.stepIndex}</p>
           <p class="muted">GUID: ${escapeHtml(errorGuid)}</p>
         </div>
-        <button class="secondary" type="button" data-open-error-case="${testCase.id}">Открыть кейс</button>
+        <div class="item-actions">
+          <button class="secondary" type="button" data-open-public-link="${testCase.id}"${publicGuidAttr}>${publicButtonLabel}</button>
+          <button class="secondary" type="button" data-open-error-case="${testCase.id}">К карточке</button>
+        </div>
       </div>
       <div class="case-error-grid">
         <div><span class="muted">Шаг</span><p>${escapeHtml(step.action) || "—"}</p></div>
@@ -1866,7 +1950,29 @@ function renderOwnerContactModal() {
           <div><span class="muted">Роль</span><strong>${escapeHtml(roleLabel(user.role))}</strong></div>
           <div><span class="muted">Email</span><strong>${escapeHtml(user.email)}</strong></div>
           <div><span class="muted">Teams</span><strong>${escapeHtml(user.teamsEmail || "Не указан")}</strong></div>
-          <div><span class="muted">Telegram</span><strong>${user.telegramUrl ? `<a href="${escapeHtml(user.telegramUrl)}" target="_blank" rel="noreferrer">${escapeHtml(user.telegramUrl)}</a>` : "Не указан"}</strong></div>
+          <div><span class="muted">Telegram</span><strong>${user.telegramUrl ? `<a href="${escapeHtml(user.telegramUrl)}">${escapeHtml(user.telegramUrl)}</a>` : "Не указан"}</strong></div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderPublicLinkModal() {
+  if (!publicLinkModalUrl) return "";
+
+  return `
+    <div class="modal-backdrop" data-close-public-link-modal>
+      <section class="modal-panel public-link-modal" role="dialog" aria-modal="true">
+        <div class="panel-title">
+          <h2>Публичная ссылка</h2>
+          <button class="secondary" data-close-public-link-modal type="button">Закрыть</button>
+        </div>
+        <div class="form-stack">
+          <label>Ссылка<textarea readonly>${escapeHtml(publicLinkModalUrl)}</textarea></label>
+          <div class="toolbar">
+            <button class="primary" type="button" data-copy-public-link-modal>Скопировать</button>
+            <a class="secondary link-button" href="${escapeHtml(publicLinkModalUrl)}">Открыть здесь</a>
+          </div>
         </div>
       </section>
     </div>
@@ -2176,6 +2282,12 @@ app.addEventListener("click", (event) => {
     return;
   }
 
+  if (event.target.dataset && event.target.dataset.closePublicLinkModal !== undefined) {
+    publicLinkModalUrl = "";
+    render();
+    return;
+  }
+
   const button = event.target.closest("button");
   if (!button) return;
   if (state.currentUserId && button.dataset.action !== "logout" && !touchSession()) return;
@@ -2239,6 +2351,22 @@ app.addEventListener("click", (event) => {
     render();
   }
 
+  if (button.dataset.openPublicLink) {
+    publicLinkModalUrl = publicCaseUrl(button.dataset.openPublicLink, button.dataset.openPublicGuid || "");
+    render();
+  }
+
+  if (button.dataset.copyPublicLinkModal !== undefined) {
+    navigator.clipboard
+      .writeText(publicLinkModalUrl)
+      .then(() => {
+        notify("Публичная ссылка скопирована.");
+        publicLinkModalUrl = "";
+        render();
+      })
+      .catch(() => window.prompt("Скопируйте ссылку", publicLinkModalUrl));
+  }
+
   if (button.dataset.copyPublicCase) {
     const url = publicCaseUrl(button.dataset.copyPublicCase);
     navigator.clipboard
@@ -2248,6 +2376,21 @@ app.addEventListener("click", (event) => {
         render();
       })
       .catch(() => window.prompt("Скопируйте ссылку на кейс", url));
+  }
+
+  if (button.dataset.savePublicCase) {
+    Array.from(publicTouchedStepIds)
+      .filter((key) => key.startsWith(`${button.dataset.savePublicCase}:`))
+      .forEach((key) => {
+        const [, stepId] = key.split(":");
+        markStepErrorSaved(findStep(button.dataset.savePublicCase, stepId));
+      });
+    saveState();
+    const guidCleared = clearPublicProblemGuidIfResolved(button.dataset.savePublicCase);
+    publicCaseDirty = false;
+    publicTouchedStepIds = new Set();
+    notify(guidCleared ? "Кейс сохранён. GUID убран из ссылки, потому что ошибка больше не активна." : "Публичное прохождение сохранено.");
+    render();
   }
 
   if (button.dataset.openErrorCase) {
@@ -2702,8 +2845,7 @@ app.addEventListener("change", (event) => {
     if (!step) return;
     step.status = event.target.value;
     ensureStepErrorGuid(step);
-    notify("Статус шага сохранён.");
-    saveState();
+    markPublicStepTouched(caseId, stepId);
     render();
     return;
   }
@@ -2715,7 +2857,7 @@ app.addEventListener("change", (event) => {
     const step = findStep(caseId, stepId);
     if (!step) return;
     step.status = event.target.value;
-    ensureStepErrorGuid(step);
+    markStepErrorSaved(step);
     notify("Статус шага сохранён.");
     saveState();
     render();
@@ -2741,7 +2883,7 @@ app.addEventListener("input", (event) => {
     const step = findStep(caseId, stepId);
     if (!step) return;
     step.comment = event.target.value;
-    saveState();
+    markPublicStepTouched(caseId, stepId);
     return;
   }
 

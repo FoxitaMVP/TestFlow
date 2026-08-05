@@ -57,6 +57,7 @@ CREATE TABLE test_case_steps (
   comment TEXT,
   result_status TEXT NOT NULL DEFAULT 'untested' CHECK (result_status IN ('untested', 'passed', 'failed')),
   error_guid TEXT,
+  error_saved_at INTEGER,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (test_case_id) REFERENCES test_cases (id) ON DELETE CASCADE
