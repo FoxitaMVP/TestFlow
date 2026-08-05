@@ -500,6 +500,13 @@ textarea:focus {
   color: var(--text);
 }
 
+.link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+}
+
 .danger {
   background: #fde9ec;
   color: var(--danger);
@@ -601,6 +608,130 @@ textarea:focus {
 .content {
   min-width: 0;
   padding: 28px;
+}
+
+.public-shell {
+  min-height: 100vh;
+  padding: 28px;
+  background:
+    linear-gradient(135deg, rgba(0, 139, 139, 0.12), transparent 34%),
+    linear-gradient(250deg, rgba(244, 182, 94, 0.12), transparent 36%),
+    var(--bg);
+}
+
+.public-card {
+  width: min(1180px, 100%);
+  margin: 0 auto;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.public-case-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+.public-case-head h1,
+.public-card h1 {
+  margin: 0 0 10px;
+  font-size: 34px;
+  line-height: 1.08;
+}
+
+.public-login-link {
+  flex: 0 0 auto;
+}
+
+.public-step-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.public-step-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.public-step-title {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.public-step-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.public-step-grid > div {
+  display: grid;
+  gap: 5px;
+}
+
+.public-step-grid p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.public-comment textarea {
+  min-height: 86px;
+}
+
+.public-status select {
+  min-width: 168px;
+}
+
+.case-error-list {
+  display: grid;
+  gap: 12px;
+}
+
+.case-error-card {
+  gap: 14px;
+}
+
+.case-error-card h3 {
+  font-size: 18px;
+  overflow-wrap: anywhere;
+}
+
+.case-error-title {
+  color: #dc2626;
+}
+
+.case-error-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.case-error-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.case-error-grid p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }
 
 .topbar {
@@ -1111,6 +1242,20 @@ a.badge {
     grid-template-columns: 1fr;
   }
 
+  .public-case-head,
+  .public-step-title {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .public-step-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .case-error-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .case-export-panel {
     align-items: stretch;
     flex-direction: column;
@@ -1133,6 +1278,22 @@ a.badge {
 
   .case-step-grid {
     min-width: 0;
+    grid-template-columns: 1fr;
+  }
+
+  .public-shell {
+    padding: 16px;
+  }
+
+  .public-card {
+    padding: 16px;
+  }
+
+  .public-step-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .case-error-grid {
     grid-template-columns: 1fr;
   }
 

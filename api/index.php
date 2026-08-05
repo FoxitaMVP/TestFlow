@@ -70,6 +70,7 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
         addColumnIfMissing($pdo, 'sqlite', 'users', 'telegram_url', 'TEXT');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'active_session_token', 'TEXT');
         addColumnIfMissing($pdo, 'sqlite', 'users', 'last_activity_at', 'INTEGER');
+        addColumnIfMissing($pdo, 'sqlite', 'test_case_steps', 'error_guid', 'TEXT');
         $pdo->exec(
             'CREATE TABLE IF NOT EXISTS test_case_assignees (
               test_case_id TEXT NOT NULL,
@@ -90,6 +91,7 @@ function ensureSupplementalSchema(PDO $pdo, string $driver): void
     addColumnIfMissing($pdo, 'mysql', 'users', 'telegram_url', 'VARCHAR(500) NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'active_session_token', 'VARCHAR(80) NULL');
     addColumnIfMissing($pdo, 'mysql', 'users', 'last_activity_at', 'BIGINT NULL');
+    addColumnIfMissing($pdo, 'mysql', 'test_case_steps', 'error_guid', 'VARCHAR(36) NULL');
     $pdo->exec(
         'CREATE TABLE IF NOT EXISTS test_case_assignees (
           test_case_id VARCHAR(40) NOT NULL,
@@ -181,7 +183,7 @@ function fetchCases(PDO $pdo): array
     $assigneeMap = fetchRelationMap($pdo, 'SELECT test_case_id AS item_id, user_id AS group_id FROM test_case_assignees');
     $stepsByCase = [];
     $steps = $pdo->query(
-        'SELECT id, test_case_id, precondition, action, expected_result, actual_result, comment, result_status
+        'SELECT id, test_case_id, precondition, action, expected_result, actual_result, comment, result_status, error_guid
          FROM test_case_steps
          ORDER BY test_case_id, sort_order, id'
     )->fetchAll();
@@ -195,6 +197,7 @@ function fetchCases(PDO $pdo): array
             'actual' => $step['actual_result'] ?? '',
             'comment' => $step['comment'] ?? '',
             'status' => $step['result_status'],
+            'errorGuid' => $step['error_guid'] ?? null,
         ];
     }
 
@@ -364,8 +367,8 @@ function saveCases(PDO $pdo, array $cases): void
     $assigneeLink = $pdo->prepare('INSERT INTO test_case_assignees (test_case_id, user_id) VALUES (?, ?)');
     $stepStmt = $pdo->prepare(
         'INSERT INTO test_case_steps
-         (id, test_case_id, sort_order, precondition, action, expected_result, actual_result, comment, result_status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+         (id, test_case_id, sort_order, precondition, action, expected_result, actual_result, comment, result_status, error_guid)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
 
     foreach ($cases as $case) {
@@ -387,6 +390,7 @@ function saveCases(PDO $pdo, array $cases): void
                 $step['actual'] ?? null,
                 $step['comment'] ?? null,
                 $step['status'] ?? 'untested',
+                $step['errorGuid'] ?? null,
             ]);
         }
     }

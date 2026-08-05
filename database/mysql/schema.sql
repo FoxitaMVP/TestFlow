@@ -58,6 +58,7 @@ CREATE TABLE test_case_steps (
   actual_result TEXT NULL,
   comment TEXT NULL,
   result_status ENUM('untested', 'passed', 'failed') NOT NULL DEFAULT 'untested',
+  error_guid VARCHAR(36) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),

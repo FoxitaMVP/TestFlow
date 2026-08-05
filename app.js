@@ -36,6 +36,24 @@ let editingGroupId = null;
 let centerNoticeTimer = null;
 let ownerContactUserId = null;
 let passwordsMigratedOnLoad = false;
+let errorGuidsMigratedOnLoad = false;
+
+function publicCaseIdFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("publicCase") || params.get("case");
+}
+
+function isPublicCaseView() {
+  return Boolean(publicCaseIdFromUrl());
+}
+
+function publicCaseUrl(caseId) {
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "";
+  url.searchParams.set("publicCase", caseId);
+  return url.toString();
+}
 
 async function loadState() {
   const apiState = await loadApiState();
@@ -80,6 +98,7 @@ async function loadState() {
     testCase.groupIds = testCase.groupIds || [];
     testCase.assignedUserIds = normalizeAssignedUsers(testCase);
   });
+  errorGuidsMigratedOnLoad = ensureFailedStepGuids(loadedState.cases);
   loadedState.remoteUsers = apiState && apiState.users ? cloneState(apiState.users) : [];
   const sessionUser = loadedState.users.find((user) => user.id === session.userId);
   loadedState.currentUserId = isValidSession(session, sessionUser) ? session.userId : null;
@@ -266,6 +285,18 @@ function id(prefix) {
   return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
 }
 
+function guid() {
+  if (crypto && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function currentUser() {
   return state.users.find((user) => user.id === state.currentUserId);
 }
@@ -420,7 +451,7 @@ async function passwordMatches(user, password) {
 }
 
 function normalizeStep(step) {
-  return {
+  const normalized = {
     id: step.id || id("s"),
     precondition: step.precondition || "",
     action: step.action || step.title || "",
@@ -428,7 +459,27 @@ function normalizeStep(step) {
     actual: step.actual || "",
     comment: step.comment || "",
     status: step.status || "untested",
+    errorGuid: step.errorGuid || null,
   };
+  ensureStepErrorGuid(normalized);
+  return normalized;
+}
+
+function ensureStepErrorGuid(step) {
+  if (!step || step.status !== "failed") return false;
+  if (step.errorGuid) return false;
+  step.errorGuid = guid();
+  return true;
+}
+
+function ensureFailedStepGuids(cases = []) {
+  let changed = false;
+  cases.forEach((testCase) => {
+    (testCase.steps || []).forEach((step) => {
+      changed = ensureStepErrorGuid(step) || changed;
+    });
+  });
+  return changed;
 }
 
 function progressForCase(testCase) {
@@ -465,6 +516,11 @@ function aggregate(cases = state.cases) {
 }
 
 function render() {
+  if (isPublicCaseView()) {
+    renderPublicCase();
+    return;
+  }
+
   if (!currentUser()) {
     renderAuth();
     return;
@@ -481,6 +537,7 @@ function render() {
           ${isAdmin() || isManager() ? navButton("groups", "◌", "Группы") : ""}
           ${isAdmin() || isManager() ? navButton("users", "◎", "Пользователи") : ""}
           ${isAdmin() ? navButton("registration-requests", "◍", `Заявки${pendingUsers().length ? ` (${pendingUsers().length})` : ""}`) : ""}
+          ${isAdmin() || isManager() ? navButton("case-errors", "!", `Ошибки${caseErrors().length ? ` (${caseErrors().length})` : ""}`) : ""}
         </nav>
         <a class="sidebar-pm-link" href="https://pm.devorx.ru/projects/newp2/issues?set_filter=1&sort=" target="_blank" rel="noreferrer">Перейти в ПМ</a>
         <div class="sidebar-user">
@@ -662,6 +719,7 @@ function renderView() {
     groups: renderGroups,
     users: renderUsers,
     "registration-requests": renderRegistrationRequests,
+    "case-errors": renderCaseErrors,
     profile: renderProfile,
   };
   return views[view]();
@@ -872,6 +930,8 @@ function renderCaseCard(testCase, options = {}) {
         expanded
           ? `<div class="item-actions">
           ${editable ? `<button class="secondary" data-edit-case="${testCase.id}">Редактировать</button>` : ""}
+          <a class="secondary link-button" href="${escapeHtml(publicCaseUrl(testCase.id))}" target="_blank" rel="noreferrer">Открыть публичную ссылку</a>
+          <button class="secondary" type="button" data-copy-public-case="${testCase.id}">Скопировать ссылку</button>
         </div>
       <div class="step-table-wrap">
         <div class="case-step-grid step-header">
@@ -993,6 +1053,77 @@ function renderStatusOnlyStepRow(caseId, step) {
       <label class="status-only"><span>Статус результата</span><select data-step-status="${caseId}:${step.id}">${statusOptions(step.status)}</select></label>
       <span></span>
     </div>
+  `;
+}
+
+function renderPublicCase() {
+  const caseId = publicCaseIdFromUrl();
+  const testCase = state.cases.find((item) => item.id === caseId);
+
+  if (!testCase) {
+    app.innerHTML = `
+      <section class="public-shell">
+        ${renderAppNotice()}
+        <section class="public-card">
+          <p class="eyebrow">Публичный доступ</p>
+          <h1>Кейс не найден</h1>
+          <p class="muted">Проверьте ссылку или запросите новую у администратора.</p>
+          <a class="secondary public-login-link" href="${escapeHtml(location.pathname)}">К авторизации</a>
+        </section>
+      </section>
+    `;
+    return;
+  }
+
+  const progress = progressForCase(testCase);
+  app.innerHTML = `
+    <section class="public-shell">
+      ${renderAppNotice()}
+      <section class="public-card public-case-card">
+        <header class="public-case-head">
+          <div>
+            <p class="eyebrow">Публичное прохождение</p>
+            <h1>${escapeHtml(testCase.title)}</h1>
+            <p class="muted">${escapeHtml(testCase.description)}</p>
+          </div>
+          <a class="secondary public-login-link" href="${escapeHtml(location.pathname)}">К авторизации</a>
+        </header>
+        <div class="badge-row">
+          ${suiteBadges(testCase.id)}
+          ${groupBadges(testCase.groupIds)}
+          <span class="badge success">${progress.passPercent}% успешно</span>
+          <span class="badge danger">${progress.failPercent}% не успешно</span>
+        </div>
+        ${progressBar(progress)}
+        <div class="public-step-list">
+          ${testCase.steps.map((step, index) => renderPublicStepRow(testCase.id, step, index)).join("") || empty("Шагов пока нет")}
+        </div>
+      </section>
+    </section>
+  `;
+}
+
+function renderPublicStepRow(caseId, step, index) {
+  return `
+    <article class="public-step-card">
+      <div class="public-step-title">
+        <span class="badge">Шаг ${index + 1}</span>
+        <label class="status-only public-status">
+          <span>Статус результата</span>
+          <select data-public-step-status="${caseId}:${step.id}">${statusOptions(step.status)}</select>
+        </label>
+      </div>
+      <div class="public-step-grid">
+        <div><span class="muted">Предусловие</span><p>${escapeHtml(step.precondition) || "—"}</p></div>
+        <div><span class="muted">Шаги</span><p>${escapeHtml(step.action) || "—"}</p></div>
+        <div><span class="muted">ОР</span><p>${escapeHtml(step.expected) || "—"}</p></div>
+        <div><span class="muted">ФР</span><p>${escapeHtml(step.actual) || "—"}</p></div>
+      </div>
+      <label class="public-comment">
+        Комментарий
+        <textarea data-public-step-comment="${caseId}:${step.id}" placeholder="Добавьте комментарий, ссылку или номер дефекта">${escapeHtml(step.comment)}</textarea>
+      </label>
+    </article>
   `;
 }
 
@@ -1245,6 +1376,62 @@ function renderRegistrationRequests() {
     <section class="user-list">
       ${requests.map(renderRegistrationRequestCard).join("") || empty("Новых заявок нет")}
     </section>
+  `;
+}
+
+function caseErrors() {
+  return visibleCases()
+    .flatMap((testCase) =>
+      (testCase.steps || [])
+        .filter((step) => step.status === "failed")
+        .map((step, index) => ({
+          case: testCase,
+          step,
+          stepIndex: index + 1,
+        })),
+    )
+    .sort((left, right) => (left.step.errorGuid || "").localeCompare(right.step.errorGuid || ""));
+}
+
+function renderCaseErrors() {
+  if (!isAdmin() && !isManager()) return forbidden();
+  const errors = caseErrors();
+  return `
+    ${topbar("Разбор", "Ошибки по кейсам", "Список шагов со статусом «Не успешно». У каждой ошибки есть постоянный GUID для разбора.")}
+    <section class="case-error-list">
+      ${errors.map(renderCaseErrorCard).join("") || empty("Ошибок по кейсам нет")}
+    </section>
+  `;
+}
+
+function renderCaseErrorCard(error) {
+  const testCase = error.case;
+  const step = error.step;
+  const errorGuid = step.errorGuid || "GUID будет создан при следующем сохранении";
+  const actualPreview = (step.actual || "ФР не заполнен").slice(0, 255);
+  return `
+    <article class="item-card case-error-card">
+      <div class="item-head">
+        <div>
+          <p class="eyebrow">ФР</p>
+          <h3 class="case-error-title">${escapeHtml(actualPreview)}</h3>
+          <p class="muted">${escapeHtml(testCase.title)} · шаг ${error.stepIndex}</p>
+          <p class="muted">GUID: ${escapeHtml(errorGuid)}</p>
+        </div>
+        <button class="secondary" type="button" data-open-error-case="${testCase.id}">Открыть кейс</button>
+      </div>
+      <div class="case-error-grid">
+        <div><span class="muted">Шаг</span><p>${escapeHtml(step.action) || "—"}</p></div>
+        <div><span class="muted">ОР</span><p>${escapeHtml(step.expected) || "—"}</p></div>
+        <div><span class="muted">ФР</span><p>${escapeHtml(step.actual) || "—"}</p></div>
+        <div><span class="muted">Комментарий</span><p>${escapeHtml(step.comment) || "—"}</p></div>
+      </div>
+      <div class="badge-row">
+        ${suiteBadges(testCase.id)}
+        ${groupBadges(testCase.groupIds)}
+        <span class="badge danger">Не успешно</span>
+      </div>
+    </article>
   `;
 }
 
@@ -2052,6 +2239,25 @@ app.addEventListener("click", (event) => {
     render();
   }
 
+  if (button.dataset.copyPublicCase) {
+    const url = publicCaseUrl(button.dataset.copyPublicCase);
+    navigator.clipboard
+      .writeText(url)
+      .then(() => {
+        notify("Публичная ссылка скопирована.");
+        render();
+      })
+      .catch(() => window.prompt("Скопируйте ссылку на кейс", url));
+  }
+
+  if (button.dataset.openErrorCase) {
+    const testCase = state.cases.find((item) => item.id === button.dataset.openErrorCase);
+    if (!canUseCase(testCase)) return;
+    expandedCaseId = testCase.id;
+    view = "cases";
+    render();
+  }
+
   if (button.dataset.editCase) {
     const testCase = state.cases.find((item) => item.id === button.dataset.editCase);
     if (!canEditCase(testCase)) return;
@@ -2490,6 +2696,18 @@ app.addEventListener("change", (event) => {
     return;
   }
 
+  if (event.target.dataset.publicStepStatus) {
+    const [caseId, stepId] = event.target.dataset.publicStepStatus.split(":");
+    const step = findStep(caseId, stepId);
+    if (!step) return;
+    step.status = event.target.value;
+    ensureStepErrorGuid(step);
+    notify("Статус шага сохранён.");
+    saveState();
+    render();
+    return;
+  }
+
   if (event.target.dataset.stepStatus) {
     const [caseId, stepId] = event.target.dataset.stepStatus.split(":");
     const testCase = state.cases.find((item) => item.id === caseId);
@@ -2497,6 +2715,7 @@ app.addEventListener("change", (event) => {
     const step = findStep(caseId, stepId);
     if (!step) return;
     step.status = event.target.value;
+    ensureStepErrorGuid(step);
     notify("Статус шага сохранён.");
     saveState();
     render();
@@ -2517,6 +2736,15 @@ app.addEventListener("input", (event) => {
     return;
   }
 
+  if (event.target.dataset.publicStepComment) {
+    const [caseId, stepId] = event.target.dataset.publicStepComment.split(":");
+    const step = findStep(caseId, stepId);
+    if (!step) return;
+    step.comment = event.target.value;
+    saveState();
+    return;
+  }
+
   if (event.target.dataset.stepField) {
     const [caseId, stepId, field] = event.target.dataset.stepField.split(":");
     const testCase = state.cases.find((item) => item.id === caseId);
@@ -2530,7 +2758,7 @@ app.addEventListener("input", (event) => {
 
 async function init() {
   state = await loadState();
-  if (passwordsMigratedOnLoad) {
+  if (passwordsMigratedOnLoad || errorGuidsMigratedOnLoad) {
     saveState();
   }
   render();
