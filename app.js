@@ -1131,7 +1131,7 @@ function renderPublicCase() {
           <p class="eyebrow">Публичный доступ</p>
           <h1>Кейс не найден</h1>
           <p class="muted">Проверьте ссылку или запросите новую у администратора.</p>
-          <a class="secondary public-login-link" href="${escapeHtml(location.pathname)}">К авторизации</a>
+          <a class="public-login-link" href="${escapeHtml(location.pathname)}" aria-label="К авторизации">⟵</a>
         </section>
       </section>
     `;
@@ -1151,7 +1151,7 @@ function renderPublicCase() {
             <h1>${escapeHtml(testCase.title)}</h1>
             <p class="muted">${escapeHtml(testCase.description)}</p>
           </div>
-          <a class="secondary public-login-link" href="${escapeHtml(location.pathname)}">К авторизации</a>
+          <a class="public-login-link" href="${escapeHtml(location.pathname)}" aria-label="К авторизации">⟵</a>
         </header>
         ${problemGuid ? `<div class="public-problem-guid"><span>GUID разбора</span><strong>${escapeHtml(problemGuid)}</strong></div>` : ""}
         ${problemGuid && !problemStep ? `<div class="app-notice">Проблема с таким GUID не найдена в этом кейсе. Показаны все шаги.</div>` : ""}
@@ -1971,7 +1971,7 @@ function renderPublicLinkModal() {
           <label>Ссылка<textarea readonly>${escapeHtml(publicLinkModalUrl)}</textarea></label>
           <div class="toolbar">
             <button class="primary" type="button" data-copy-public-link-modal>Скопировать</button>
-            <a class="secondary link-button" href="${escapeHtml(publicLinkModalUrl)}">Открыть здесь</a>
+            <a class="secondary link-button" href="${escapeHtml(publicLinkModalUrl)}" target="_blank" rel="noreferrer">Открыть</a>
           </div>
         </div>
       </section>

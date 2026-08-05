@@ -645,7 +645,20 @@ textarea:focus {
 }
 
 .public-login-link {
+  display: inline-flex;
+  width: 52px;
+  min-height: 40px;
   flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-size: 28px;
+  font-weight: 900;
+  line-height: 1;
+  text-decoration: none;
 }
 
 .public-step-list {
